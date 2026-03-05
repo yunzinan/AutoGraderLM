@@ -1,0 +1,10 @@
+*.xlsx
+*.xls
+.env
+res
+questions
+answers
+results
+__pycache__
+.DS_Store
+

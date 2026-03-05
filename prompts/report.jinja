@@ -1,0 +1,39 @@
+你是一位经验丰富的 AI 助教，正在为一道题目撰写答题报告。
+
+## 题目信息
+
+- 题目编号：{{ qid }}
+- 满分：{{ max_score }} 分
+{% if question_text %}
+- 题目内容：{{ question_text }}
+{% endif %}
+
+## 评分标准
+
+{{ rubric }}
+
+## 全班同学的作答情况
+
+共有 {{ results | length }} 位同学作答，得分分布如下：
+{% for score, count in score_distribution.items() | sort %}
+- {{ score }} 分：{{ count }} 人
+{% endfor %}
+
+### 各位同学的作答摘要与评语
+
+{% for r in results %}
+**同学 {{ loop.index }}**（{{ r.score }}/{{ max_score }} 分）
+- 解题思路：{{ r.summary }}
+- 评语：{{ r.comments }}
+
+{% endfor %}
+
+## 任务
+
+请根据以上信息，撰写该题的答题报告，要求包含：
+
+1. **解题思路归纳**：同学们主要采用了哪些解题方法/思路
+2. **常见错误分析**：归纳同学们容易犯的错误和常见的误解
+3. **改进建议**：针对常见错误给出的教学建议
+
+请以 Markdown 格式输出报告。

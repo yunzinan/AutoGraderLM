@@ -1,0 +1,39 @@
+# AutoGraderLM Configuration
+
+assignment_name: "Assignment 1"
+
+web_server:
+  port: 8081
+
+
+assignment_configuration:
+  num_question: 5
+  num_student: 5 # equals to the number of files in pdf_folder_path, and number of rows in xlsx_in_path
+  pdf_folder_path: "./res/"
+  xlsx_in_path: "./图论-作业1_学生名单列表 .xls"
+
+assignment_segmentation:
+  max_retry: 3
+  llm: 
+    model: "gemini-3-flash-preview"
+    endpoint: "/v1/chat/completions"
+    prompt_template: "./prompts/segmentation.jinja"
+  
+
+assignment_grading:
+  max_retry: 3
+  llm: 
+    model: "gemini-3-flash-preview"
+    endpoint: "/v1/chat/completions"
+    prompt_template: "./prompts/grading.jinja"
+
+
+assignment_report:
+  llm:
+    model: "gemini-3-flash-preview"
+    endpoint: "/v1/chat/completions"
+    prompt_template: "./prompts/report.jinja"
+  xlsx_out_path: "./图论-作业1_学生名单列表_评分统计.xlsx"
+
+
+
