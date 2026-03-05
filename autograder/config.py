@@ -39,11 +39,13 @@ class AssignmentConfigSection(BaseModel):
 
 
 class SegmentationConfig(BaseModel):
+    num_workers: int = 5
     max_retry: int = 3
     llm: LLMConfig = Field(default_factory=LLMConfig)
 
 
 class GradingConfig(BaseModel):
+    num_workers: int = 5
     max_retry: int = 3
     llm: LLMConfig = Field(default_factory=LLMConfig)
 
@@ -53,6 +55,12 @@ class ReportConfig(BaseModel):
     xlsx_out_path: str = ""
 
 
+class LlmLogConfig(BaseModel):
+    """大模型对话日志，用于后台调试。"""
+    enabled: bool = False
+    path: str = "./logs/llm_dialogue.log"
+
+
 class AppConfig(BaseModel):
     assignment_name: str = "Assignment 1"
     web_server: WebServerConfig = Field(default_factory=WebServerConfig)
@@ -60,6 +68,7 @@ class AppConfig(BaseModel):
     assignment_segmentation: SegmentationConfig = Field(default_factory=SegmentationConfig)
     assignment_grading: GradingConfig = Field(default_factory=GradingConfig)
     assignment_report: ReportConfig = Field(default_factory=ReportConfig)
+    llm_log: LlmLogConfig = Field(default_factory=LlmLogConfig)
 
 
 def _normalize_base_url(url: str) -> str:

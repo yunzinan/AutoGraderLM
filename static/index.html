@@ -4,321 +4,562 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AutoGraderLM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'PingFang SC', 'Microsoft YaHei', 'system-ui', 'sans-serif']
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              200: '#c7d2fe',
+              300: '#a5b4fc',
+              400: '#818cf8',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+              800: '#3730a3',
+              900: '#312e81'
+            }
+          }
+        }
+      }
+    };
+  </script>
   <style>
     [v-cloak] { display: none; }
-    .fade-enter-active, .fade-leave-active { transition: opacity .2s; }
-    .fade-enter-from, .fade-leave-to { opacity: 0; }
-    .sidebar-item { @apply flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors cursor-pointer; }
-    .sidebar-item:hover { @apply bg-indigo-50 text-indigo-700; }
-    .sidebar-item.active { @apply bg-indigo-100 text-indigo-800 font-semibold; }
-    .btn { @apply px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50; }
-    .btn-primary { @apply bg-indigo-600 text-white hover:bg-indigo-700; }
-    .btn-secondary { @apply bg-gray-100 text-gray-700 hover:bg-gray-200; }
-    .btn-danger { @apply bg-red-50 text-red-600 hover:bg-red-100; }
-    .btn-success { @apply bg-emerald-600 text-white hover:bg-emerald-700; }
-    .card { @apply bg-white rounded-xl shadow-sm border border-gray-100 p-6; }
-    .input { @apply w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent; }
-    .label { @apply block text-sm font-medium text-gray-700 mb-1; }
-    .badge { @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium; }
-    .prose h1 { font-size:1.5em; font-weight:700; margin:0.5em 0; }
-    .prose h2 { font-size:1.25em; font-weight:600; margin:0.5em 0; }
-    .prose h3 { font-size:1.1em; font-weight:600; margin:0.4em 0; }
-    .prose p { margin:0.4em 0; }
-    .prose ul { list-style:disc; padding-left:1.5em; }
-    .prose ol { list-style:decimal; padding-left:1.5em; }
-    .prose li { margin:0.2em 0; }
+    body {
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(99, 102, 241, 0.18), rgba(99, 102, 241, 0) 40%),
+        radial-gradient(circle at 90% 10%, rgba(14, 165, 233, 0.16), rgba(14, 165, 233, 0) 42%),
+        #f3f5fb;
+      color: #0f172a;
+    }
+    .panel {
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 18px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+    }
+    .card {
+      background: rgba(255, 255, 255, 0.93);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+    }
+    .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #475569;
+      margin-bottom: 8px;
+    }
+    .input {
+      width: 100%;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 14px;
+      background-color: #ffffff;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .input:focus {
+      outline: none;
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.16);
+    }
+    .btn {
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+      color: #fff;
+      box-shadow: 0 10px 20px rgba(79, 70, 229, 0.28);
+    }
+    .btn-primary:hover { transform: translateY(-1px); }
+    .btn-secondary {
+      background: #f1f5f9;
+      color: #334155;
+    }
+    .btn-secondary:hover { background: #e2e8f0; }
+    .btn-danger {
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+    .btn-success {
+      background: #10b981;
+      color: #fff;
+    }
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #475569;
+      transition: all 0.2s;
+    }
+    .nav-link:hover {
+      color: #1e293b;
+      background: rgba(99, 102, 241, 0.08);
+      border-color: rgba(99, 102, 241, 0.2);
+    }
+    .nav-link.active {
+      color: #312e81;
+      background: rgba(99, 102, 241, 0.14);
+      border-color: rgba(99, 102, 241, 0.3);
+      box-shadow: 0 8px 18px rgba(99, 102, 241, 0.12);
+    }
+    .paste-zone {
+      min-height: 120px;
+      border: 2px dashed #cbd5e1;
+      border-radius: 12px;
+      background: #f8fafc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px;
+      transition: all 0.2s;
+    }
+    .paste-zone:hover,
+    .paste-zone:focus {
+      outline: none;
+      border-color: #6366f1;
+      background: #eef2ff;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .prose h1, .prose h2, .prose h3 { margin: 0.5em 0; font-weight: 700; }
+    .prose p { margin: 0.45em 0; }
+    .prose ul { list-style: disc; padding-left: 1.25rem; }
+    .prose ol { list-style: decimal; padding-left: 1.25rem; }
   </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
-<div id="app" v-cloak>
-  <div class="flex min-h-screen">
-    <!-- Sidebar -->
-    <aside class="w-64 bg-white border-r border-gray-200 flex flex-col">
-      <div class="px-6 py-5 border-b border-gray-100">
-        <h1 class="text-lg font-bold text-indigo-700">AutoGraderLM</h1>
-        <p class="text-xs text-gray-400 mt-1">{{ configData.assignment_name || 'LLM 自动评分系统' }}</p>
-      </div>
-      <nav class="flex-1 px-3 py-4 space-y-1">
-        <div v-for="item in navItems" :key="item.id"
-             class="sidebar-item" :class="{active: page === item.id}"
-             @click="page = item.id">
-          <span>{{ item.icon }}</span>
-          <span>{{ item.label }}</span>
+<body class="min-h-screen">
+<div id="app" v-cloak class="px-5 py-6 lg:px-8 lg:py-8">
+  <div class="mx-auto max-w-[1480px]">
+    <div class="grid grid-cols-1 gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
+      <aside class="panel p-4 lg:p-5">
+        <div class="mb-5 rounded-xl bg-gradient-to-br from-brand-600 to-indigo-600 p-4 text-white shadow-lg">
+          <p class="text-xs uppercase tracking-[0.18em] text-indigo-100">AutoGraderLM</p>
+          <h1 class="mt-2 text-lg font-bold">{{ configData.assignment_name || '智能作业评分中台' }}</h1>
+          <p class="mt-2 text-xs text-indigo-100/90">围绕“配置-解析-评分-复核-统计”全流程设计</p>
         </div>
-      </nav>
-    </aside>
+        <nav class="space-y-2">
+          <button
+            v-for="item in navItems"
+            :key="item.id"
+            type="button"
+            class="nav-link"
+            :class="{ active: page === item.id }"
+            @click="page = item.id"
+          >
+            <span class="text-base">{{ item.icon }}</span>
+            <span class="flex-1 text-left">{{ item.label }}</span>
+          </button>
+        </nav>
+      </aside>
 
-    <!-- Main Content -->
-    <main class="flex-1 overflow-auto">
-      <div class="max-w-6xl mx-auto px-8 py-6">
-
-        <!-- 作业配置 -->
-        <section v-if="page==='config'">
-          <div class="flex items-center justify-between mb-6">
-            <h2 class="text-xl font-bold text-gray-800">作业配置</h2>
-            <button class="btn btn-primary" @click="addQuestion">+ 新增题目</button>
-          </div>
-          <div v-if="!questions.length" class="card text-center text-gray-400 py-12">
-            暂无题目配置，点击右上角新增
-          </div>
-          <div v-for="(q, i) in questions" :key="q.qid" class="card mb-4">
-            <div class="flex items-start justify-between mb-4">
-              <h3 class="text-base font-semibold text-gray-800">{{ q.qid }}</h3>
-              <button class="btn btn-danger text-xs" @click="deleteQuestion(q.qid)">删除</button>
+      <main class="space-y-5">
+        <section class="panel p-4 lg:p-5">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">当前模块</p>
+              <h2 class="mt-1 text-2xl font-bold text-slate-900">{{ currentNav.label }}</h2>
+              <p class="mt-1 text-sm text-slate-600">{{ currentNav.desc }}</p>
             </div>
-            <div class="grid grid-cols-2 gap-4 mb-4">
+            <div class="grid grid-cols-3 gap-3 text-center">
+              <div class="rounded-xl bg-slate-50 px-4 py-3">
+                <p class="text-xs text-slate-500">题目数</p>
+                <p class="mt-1 text-xl font-bold text-slate-900">{{ questions.length }}</p>
+              </div>
+              <div class="rounded-xl bg-slate-50 px-4 py-3">
+                <p class="text-xs text-slate-500">复核待处理</p>
+                <p class="mt-1 text-xl font-bold text-amber-600">{{ reviewItems.length }}</p>
+              </div>
+              <div class="rounded-xl bg-slate-50 px-4 py-3">
+                <p class="text-xs text-slate-500">状态</p>
+                <p class="mt-1 text-sm font-bold" :class="pipelineStateClass">{{ pipelineStateText }}</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section v-if="page === 'config'" class="space-y-4">
+          <div class="panel p-4 lg:p-5">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <label class="label">题目分值</label>
+                <h3 class="text-lg font-bold text-slate-900">作业配置</h3>
+                <p class="mt-1 text-sm text-slate-600">配置题干、分值、评分标准与参考答案，保存至题库目录。</p>
+              </div>
+              <button class="btn btn-primary" @click="addQuestion">+ 新增题目</button>
+            </div>
+          </div>
+
+          <div v-if="!questions.length" class="panel p-12 text-center text-slate-500">
+            <p class="text-lg font-semibold text-slate-700">还没有题目配置</p>
+            <p class="mt-2 text-sm">点击“新增题目”开始配置每一道题。</p>
+          </div>
+
+          <div v-for="q in questions" :key="q.qid" class="panel p-4 lg:p-5">
+            <div class="mb-4 flex items-center justify-between">
+              <h4 class="text-base font-bold text-slate-900">{{ q.qid }}</h4>
+              <button class="btn btn-danger" @click="deleteQuestion(q.qid)">删除</button>
+            </div>
+
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <label class="form-label">题目序号（习题集序号）</label>
+                <input type="number" class="input" v-model.number="q.question_index" min="1" placeholder="如 2、4、7、8，留空表示 1、2、3…" />
+                <p class="mt-1 text-xs text-slate-500">学生答卷上写的题号，与习题集一致时填写</p>
+              </div>
+              <div>
+                <label class="form-label">题目分值</label>
                 <input type="number" class="input" v-model.number="q.score" min="0" max="100" />
               </div>
               <div>
-                <label class="label">题干内容（文本）</label>
-                <input class="input" v-model="q.question_text" placeholder="可选，文本描述" />
+                <label class="form-label">题干文本</label>
+                <input class="input" v-model="q.question_text" placeholder="可选，输入题干文字描述" />
               </div>
             </div>
-            <div class="mb-4">
-              <label class="label">评分标准</label>
-              <textarea class="input" rows="3" v-model="q.rubric" placeholder="评分细则..."></textarea>
+
+            <div class="mt-4">
+              <label class="form-label">评分标准</label>
+              <textarea class="input" rows="4" v-model="q.rubric" placeholder="请填写评分细则"></textarea>
             </div>
-            <div class="mb-4">
-              <label class="label">参考答案（文本）</label>
+
+            <div class="mt-4">
+              <label class="form-label">参考答案文本</label>
               <textarea class="input" rows="2" v-model="q.example_answer_text" placeholder="可选"></textarea>
             </div>
-            <div class="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label class="label">题干图片</label>
-                <div class="flex flex-wrap gap-2 mb-2">
-                  <img v-for="img in q.question_images" :src="'/files/'+img" class="h-20 rounded border" />
+
+            <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+              <div class="card">
+                <p class="mb-3 text-sm font-semibold text-slate-700">题干图片</p>
+                <div class="mb-3 flex flex-wrap gap-2">
+                  <img
+                    v-for="(img, idx) in q.question_images"
+                    :key="idx"
+                    :src="'/files/' + img"
+                    class="h-24 rounded-lg border border-slate-200 bg-white object-contain p-1"
+                  />
                 </div>
-                <input type="file" accept="image/*" @change="e => uploadImage(q.qid, 'question', e)" />
-              </div>
-              <div>
-                <label class="label">参考答案图片</label>
-                <div class="flex flex-wrap gap-2 mb-2">
-                  <img v-for="img in q.example_answer_images" :src="'/files/'+img" class="h-20 rounded border" />
+                <div
+                  class="paste-zone"
+                  tabindex="0"
+                  @paste="onPaste($event, q.qid, 'question')"
+                  :data-qid="q.qid"
+                  data-kind="question"
+                >
+                  <span class="text-sm font-medium text-slate-600">粘贴图片（Ctrl+V / ⌘V）</span>
+                  <button type="button" class="text-xs font-semibold text-brand-600" @click.stop="triggerFileInput(q.qid, 'question')">或点击选择文件</button>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    class="hidden"
+                    :ref="el => setFileInputRef(el, q.qid, 'question')"
+                    @change="e => uploadImage(q.qid, 'question', e)"
+                  />
                 </div>
-                <input type="file" accept="image/*" @change="e => uploadImage(q.qid, 'example', e)" />
+              </div>
+
+              <div class="card">
+                <p class="mb-3 text-sm font-semibold text-slate-700">参考答案图片</p>
+                <div class="mb-3 flex flex-wrap gap-2">
+                  <img
+                    v-for="(img, idx) in q.example_answer_images"
+                    :key="idx"
+                    :src="'/files/' + img"
+                    class="h-24 rounded-lg border border-slate-200 bg-white object-contain p-1"
+                  />
+                </div>
+                <div
+                  class="paste-zone"
+                  tabindex="0"
+                  @paste="onPaste($event, q.qid, 'example')"
+                  :data-qid="q.qid"
+                  data-kind="example"
+                >
+                  <span class="text-sm font-medium text-slate-600">粘贴图片（Ctrl+V / ⌘V）</span>
+                  <button type="button" class="text-xs font-semibold text-brand-600" @click.stop="triggerFileInput(q.qid, 'example')">或点击选择文件</button>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    class="hidden"
+                    :ref="el => setFileInputRef(el, q.qid, 'example')"
+                    @change="e => uploadImage(q.qid, 'example', e)"
+                  />
+                </div>
               </div>
             </div>
-            <div class="flex justify-end">
-              <button class="btn btn-primary" @click="saveQuestion(q)">保存</button>
+
+            <div class="mt-4 flex justify-end">
+              <button class="btn btn-primary" @click="saveQuestion(q)">保存题目配置</button>
             </div>
           </div>
         </section>
 
-        <!-- 作业解析 -->
-        <section v-if="page==='segment'">
-          <h2 class="text-xl font-bold text-gray-800 mb-6">作业解析（切分）</h2>
-          <div class="card">
-            <p class="text-sm text-gray-600 mb-4">
-              从 <code class="bg-gray-100 px-1 rounded">{{ configData.assignment_configuration?.pdf_folder_path || './res/' }}</code>
-              读取 PDF 文件，调用 LLM 将每份作业按题目切分为独立图片。
+        <section v-if="page === 'segment'" class="space-y-4">
+          <div class="panel p-5">
+            <h3 class="text-lg font-bold text-slate-900">作业解析（切分）</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-600">
+              从 <code class="rounded bg-slate-100 px-2 py-0.5 text-brand-700">{{ configData.assignment_configuration?.pdf_folder_path || './res/' }}</code>
+              读取作业 PDF，按题目切分为图片，输出到答案目录。
             </p>
-            <button class="btn btn-primary" @click="runPipeline('segment')" :disabled="status.stage!=='idle'&&status.stage!=='done'&&status.stage!=='error'">
-              开始切分
-            </button>
-            <div v-if="status.stage==='segmentation'" class="mt-4">
-              <div class="flex items-center gap-3 mb-2">
-                <div class="animate-spin h-4 w-4 border-2 border-indigo-500 border-t-transparent rounded-full"></div>
-                <span class="text-sm text-gray-600">{{ status.message }}</span>
-              </div>
-              <div class="w-full bg-gray-200 rounded-full h-2">
-                <div class="bg-indigo-600 h-2 rounded-full transition-all" :style="{width: progressPct + '%'}"></div>
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+              <button class="btn btn-primary" @click="runPipeline('segment')" :disabled="isSegmentBusy || isGradingBusy || isReportBusy">开始切分</button>
+              <button v-if="isSegmentBusy" class="btn btn-secondary" @click="cancelPipeline">停止</button>
+            </div>
+            <div v-if="status.stage === 'segmentation'" class="mt-4">
+              <p class="mb-2 text-sm font-medium text-slate-600">{{ status.message }}</p>
+              <div class="h-2.5 overflow-hidden rounded-full bg-slate-200">
+                <div class="h-2.5 rounded-full bg-gradient-to-r from-brand-500 to-sky-500 transition-all duration-300" :style="{ width: progressPct + '%' }"></div>
               </div>
             </div>
-            <div v-if="status.stage==='done'&&lastAction==='segment'" class="mt-4 text-sm text-emerald-600 font-medium">
-              ✓ {{ status.message }}
+            <div v-if="status.stage === 'done' && lastAction === 'segment'" class="mt-4 rounded-xl bg-emerald-50 p-3 text-sm font-medium text-emerald-700">
+              切分完成：{{ status.message }}
             </div>
-            <div v-if="status.errors.length" class="mt-4">
-              <p v-for="e in status.errors" class="text-sm text-red-600">{{ e }}</p>
+            <div v-if="status.errors.length" class="mt-4 rounded-xl bg-red-50 p-3">
+              <p v-for="e in status.errors" class="text-sm text-red-700">- {{ e }}</p>
             </div>
           </div>
         </section>
 
-        <!-- 作业评分 -->
-        <section v-if="page==='grade'">
-          <h2 class="text-xl font-bold text-gray-800 mb-6">作业评分</h2>
-          <div class="card">
-            <p class="text-sm text-gray-600 mb-4">
-              基于切分结果和题目配置，调用 LLM 逐题评分。<br/>
-              对 confidence=2 的结果自动重试，confidence≤2 的将汇总至"人工复核"页面。
+        <section v-if="page === 'grade'" class="space-y-4">
+          <div class="panel p-5">
+            <h3 class="text-lg font-bold text-slate-900">作业评分</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-600">
+              基于切分结果与题目配置逐题评分。系统会自动重试低置信度结果并将需处理样本汇总至人工复核。
             </p>
-            <button class="btn btn-primary" @click="runPipeline('grade')" :disabled="status.stage!=='idle'&&status.stage!=='done'&&status.stage!=='error'">
-              开始评分
-            </button>
-            <div v-if="status.stage==='grading'" class="mt-4">
-              <div class="flex items-center gap-3 mb-2">
-                <div class="animate-spin h-4 w-4 border-2 border-indigo-500 border-t-transparent rounded-full"></div>
-                <span class="text-sm text-gray-600">{{ status.message }}</span>
-              </div>
-              <div class="w-full bg-gray-200 rounded-full h-2">
-                <div class="bg-indigo-600 h-2 rounded-full transition-all" :style="{width: progressPct + '%'}"></div>
+            <div class="mt-4 flex flex-wrap items-center gap-2">
+              <button class="btn btn-primary" @click="runPipeline('grade')" :disabled="isGradingBusy || isSegmentBusy || isReportBusy">开始评分</button>
+              <button v-if="isGradingBusy" class="btn btn-secondary" @click="cancelPipeline">停止</button>
+            </div>
+            <div v-if="status.stage === 'grading'" class="mt-4">
+              <p class="mb-2 text-sm font-medium text-slate-600">{{ status.message }}</p>
+              <div class="h-2.5 overflow-hidden rounded-full bg-slate-200">
+                <div class="h-2.5 rounded-full bg-gradient-to-r from-brand-500 to-sky-500 transition-all duration-300" :style="{ width: progressPct + '%' }"></div>
               </div>
             </div>
-            <div v-if="status.stage==='done'&&lastAction==='grade'" class="mt-4 text-sm text-emerald-600 font-medium">
-              ✓ {{ status.message }}
+            <div v-if="status.stage === 'done' && lastAction === 'grade'" class="mt-4 rounded-xl bg-emerald-50 p-3 text-sm font-medium text-emerald-700">
+              评分完成：{{ status.message }}
             </div>
           </div>
         </section>
 
-        <!-- 人工复核 -->
-        <section v-if="page==='review'">
-          <h2 class="text-xl font-bold text-gray-800 mb-6">人工复核</h2>
-          <div v-if="!reviewItems.length" class="card text-center text-gray-400 py-8">
-            暂无需要复核的作答（confidence ≤ 2）
+        <section v-if="page === 'review'" class="space-y-4">
+          <div class="panel p-5">
+            <h3 class="text-lg font-bold text-slate-900">人工复核</h3>
+            <p class="mt-1 text-sm text-slate-600">集中处理低置信度作答，支持人工修正分数与评语。</p>
           </div>
-          <div v-for="item in reviewItems" :key="item.filename+item.qid" class="card mb-4">
-            <div class="flex items-center justify-between mb-3">
-              <div>
-                <span class="font-semibold text-gray-800">{{ item.student_name }}</span>
-                <span class="text-gray-400 text-sm ml-2">{{ item.student_id }}</span>
-                <span class="badge ml-2" :class="confidenceBadge(item.confidence)">
-                  confidence: {{ item.confidence }}
-                </span>
+
+          <div v-if="!reviewItems.length" class="panel p-10 text-center text-slate-500">
+            当前没有需要复核的作答。
+          </div>
+
+          <div v-for="item in reviewItems" :key="item.filename + item.qid" class="panel p-4 lg:p-5">
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-bold text-slate-900">{{ item.student_name }}</span>
+                <span class="text-sm text-slate-500">{{ item.student_id }}</span>
+                <span class="badge" :class="confidenceBadge(item.confidence)">confidence {{ item.confidence }}</span>
               </div>
-              <span class="text-sm font-medium text-gray-500">{{ item.qid }}</span>
+              <span class="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ item.qid }}</span>
             </div>
-            <div class="flex flex-wrap gap-2 mb-3">
-              <img v-for="img in item.answer" :src="'/files/'+img" class="max-h-40 rounded border" />
+            <div class="mb-3 flex flex-wrap gap-2">
+              <img v-for="img in item.answer" :src="'/files/' + img" class="max-h-44 rounded-lg border border-slate-200 bg-white p-1" />
             </div>
-            <div class="text-sm text-gray-600 mb-1"><b>LLM 总结：</b>{{ item.summary }}</div>
-            <div class="text-sm text-gray-600 mb-3"><b>LLM 评语：</b>{{ item.comments }}</div>
-            <div class="grid grid-cols-4 gap-3">
+            <div class="mb-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><b>LLM 总结：</b>{{ item.summary }}</div>
+            <div class="mb-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><b>LLM 评语：</b>{{ item.comments }}</div>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
               <div>
-                <label class="label">分数</label>
+                <label class="form-label">分数</label>
                 <input type="number" class="input" v-model.number="item.score" min="0" />
               </div>
               <div>
-                <label class="label">置信度</label>
+                <label class="form-label">置信度</label>
                 <input type="number" class="input" v-model.number="item.confidence" min="0" max="4" />
               </div>
-              <div class="col-span-2">
-                <label class="label">评语</label>
+              <div class="md:col-span-2">
+                <label class="form-label">评语</label>
                 <input class="input" v-model="item.comments" />
               </div>
             </div>
-            <div class="flex justify-end mt-3">
+            <div class="mt-4 flex justify-end">
               <button class="btn btn-success" @click="submitReview(item)">提交复核</button>
             </div>
           </div>
         </section>
 
-        <!-- 评阅结果 -->
-        <section v-if="page==='results'">
-          <h2 class="text-xl font-bold text-gray-800 mb-6">评阅结果</h2>
-          <div class="card mb-4">
-            <label class="label">选择学生</label>
-            <select class="input" v-model="selectedStudent" @change="loadStudentResult">
-              <option value="">-- 请选择 --</option>
-              <option v-for="s in studentList" :value="s.filename_stem">
-                {{ s.student_id }} - {{ s.student_name }}（总分: {{ s.total_score }}）
-              </option>
-            </select>
-          </div>
-          <div v-if="currentResult">
-            <div class="flex items-center gap-4 mb-4">
-              <h3 class="text-lg font-semibold">{{ currentResult.student_name }} ({{ currentResult.student_id }})</h3>
-              <span class="badge bg-indigo-100 text-indigo-700">总分: {{ currentResult.total_score }}</span>
+        <section v-if="page === 'results'" class="space-y-4">
+          <div class="panel p-5">
+            <h3 class="text-lg font-bold text-slate-900">评阅结果</h3>
+            <p class="mt-1 text-sm text-slate-600">按学生查看每道题的题干、作答图片与评分详情。</p>
+            <div class="mt-4">
+              <label class="form-label">选择学生</label>
+              <select class="input max-w-lg" v-model="selectedStudent" @change="loadStudentResult">
+                <option value="">-- 请选择 --</option>
+                <option v-for="s in studentList" :value="s.filename_stem">
+                  {{ s.student_id }} - {{ s.student_name }}（总分: {{ s.total_score }}）
+                </option>
+              </select>
             </div>
-            <div v-for="r in currentResult.records" :key="r.qid" class="card mb-4">
-              <div class="flex items-center justify-between mb-3">
-                <h4 class="font-semibold text-gray-800">{{ r.qid }}</h4>
-                <div class="flex items-center gap-3">
-                  <span class="badge" :class="confidenceBadge(r.confidence)">confidence: {{ r.confidence }}</span>
-                  <span class="text-sm font-medium">{{ r.score }} 分</span>
-                  <span class="text-xs text-gray-400">评阅人: {{ r.grader }}</span>
+          </div>
+
+          <div v-if="currentResult" class="panel p-4 lg:p-5">
+            <div class="mb-4 flex flex-wrap items-center gap-3">
+              <h4 class="text-xl font-bold text-slate-900">{{ currentResult.student_name }}（{{ currentResult.student_id }}）</h4>
+              <span class="badge bg-brand-100 text-brand-700">总分 {{ currentResult.total_score }}</span>
+            </div>
+            <div v-for="r in currentResult.records" :key="r.qid" class="mb-4 rounded-xl border border-slate-200 bg-white p-4 last:mb-0">
+              <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <p class="font-bold text-slate-900">{{ r.qid }}</p>
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="badge" :class="confidenceBadge(r.confidence)">confidence {{ r.confidence }}</span>
+                  <span class="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ r.score }} 分</span>
+                  <span class="text-xs text-slate-500">评阅人: {{ r.grader }}</span>
                 </div>
               </div>
-              <div v-if="getQuestionByQid(r.qid)" class="mb-3 p-3 bg-gray-50 rounded-lg">
-                <p class="text-xs text-gray-500 mb-1">题干</p>
-                <p class="text-sm" v-if="getQuestionByQid(r.qid).question_text">{{ getQuestionByQid(r.qid).question_text }}</p>
-                <div class="flex flex-wrap gap-2 mt-1">
-                  <img v-for="img in getQuestionByQid(r.qid).question_images" :src="'/files/'+img" class="max-h-32 rounded" />
+              <div v-if="getQuestionByQid(r.qid)" class="mb-3 rounded-lg bg-slate-50 p-3">
+                <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">题干</p>
+                <p v-if="getQuestionByQid(r.qid).question_text" class="mb-2 text-sm text-slate-700">{{ getQuestionByQid(r.qid).question_text }}</p>
+                <div class="flex flex-wrap gap-2">
+                  <img v-for="img in getQuestionByQid(r.qid).question_images" :src="'/files/' + img" class="max-h-32 rounded-lg border border-slate-200 bg-white p-1" />
                 </div>
               </div>
-              <div class="flex flex-wrap gap-2 mb-3">
-                <img v-for="img in r.answer" :src="'/files/'+img" class="max-h-48 rounded border" />
+              <div class="mb-3 flex flex-wrap gap-2">
+                <img v-for="img in r.answer" :src="'/files/' + img" class="max-h-48 rounded-lg border border-slate-200 bg-white p-1" />
               </div>
-              <div class="text-sm text-gray-700 mb-1"><b>总结：</b>{{ r.summary }}</div>
-              <div class="text-sm text-gray-700"><b>评语：</b>{{ r.comments }}</div>
+              <div class="mb-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><b>总结：</b>{{ r.summary }}</div>
+              <div class="rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><b>评语：</b>{{ r.comments }}</div>
             </div>
           </div>
         </section>
 
-        <!-- 评分统计 -->
-        <section v-if="page==='stats'">
-          <div class="flex items-center justify-between mb-6">
-            <h2 class="text-xl font-bold text-gray-800">评分统计</h2>
-            <div class="flex gap-2">
-              <button class="btn btn-primary" @click="runPipeline('report')">生成报告 & 导出</button>
-              <a href="/api/stats/export" class="btn btn-secondary" download>下载 Excel</a>
+        <section v-if="page === 'stats'" class="space-y-4">
+          <div class="panel p-5">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 class="text-lg font-bold text-slate-900">评分统计</h3>
+                <p class="mt-1 text-sm text-slate-600">汇总总分和评语并导出评分表。</p>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button class="btn btn-primary" @click="runPipeline('report')" :disabled="isReportBusy || isSegmentBusy || isGradingBusy">生成报告并导出</button>
+                <button v-if="isReportBusy" class="btn btn-secondary" @click="cancelPipeline">停止</button>
+                <a href="/api/stats/export" class="btn btn-secondary" download>下载 Excel</a>
+              </div>
+            </div>
+            <div v-if="status.stage === 'report'" class="mt-4">
+              <p class="mb-2 text-sm font-medium text-slate-600">正在生成报告中：{{ status.message }}</p>
+              <div class="h-2.5 overflow-hidden rounded-full bg-slate-200">
+                <div class="h-2.5 rounded-full bg-gradient-to-r from-brand-500 to-sky-500 transition-all duration-300" :style="{ width: progressPct + '%' }"></div>
+              </div>
+            </div>
+            <div v-if="status.stage === 'done' && lastAction === 'report'" class="mt-4 rounded-xl bg-emerald-50 p-3 text-sm font-medium text-emerald-700">
+              报告生成完成：{{ status.message }}
+            </div>
+            <div v-if="status.stage === 'error' && lastAction === 'report'" class="mt-4 rounded-xl bg-red-50 p-3">
+              <p v-for="e in status.errors" class="text-sm text-red-700">- {{ e }}</p>
             </div>
           </div>
-          <div v-if="summary.total_students" class="grid grid-cols-4 gap-4 mb-6">
-            <div class="card text-center">
-              <p class="text-2xl font-bold text-indigo-600">{{ summary.total_students }}</p>
-              <p class="text-xs text-gray-500 mt-1">学生总数</p>
+
+          <div v-if="summary.total_students" class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div class="panel p-4 text-center">
+              <p class="text-xs text-slate-500">学生总数</p>
+              <p class="mt-1 text-2xl font-bold text-slate-900">{{ summary.total_students }}</p>
             </div>
-            <div class="card text-center">
-              <p class="text-2xl font-bold text-emerald-600">{{ summary.avg_score }}</p>
-              <p class="text-xs text-gray-500 mt-1">平均分</p>
+            <div class="panel p-4 text-center">
+              <p class="text-xs text-slate-500">平均分</p>
+              <p class="mt-1 text-2xl font-bold text-emerald-600">{{ summary.avg_score }}</p>
             </div>
-            <div class="card text-center">
-              <p class="text-2xl font-bold text-blue-600">{{ summary.max_score }}</p>
-              <p class="text-xs text-gray-500 mt-1">最高分</p>
+            <div class="panel p-4 text-center">
+              <p class="text-xs text-slate-500">最高分</p>
+              <p class="mt-1 text-2xl font-bold text-brand-600">{{ summary.max_score }}</p>
             </div>
-            <div class="card text-center">
-              <p class="text-2xl font-bold text-amber-600">{{ summary.min_score }}</p>
-              <p class="text-xs text-gray-500 mt-1">最低分</p>
+            <div class="panel p-4 text-center">
+              <p class="text-xs text-slate-500">最低分</p>
+              <p class="mt-1 text-2xl font-bold text-amber-600">{{ summary.min_score }}</p>
             </div>
           </div>
-          <div class="card">
+
+          <div class="panel p-4 lg:p-5">
             <div class="overflow-x-auto">
-              <table class="w-full text-sm">
+              <table class="w-full min-w-[720px] text-sm">
                 <thead>
-                  <tr class="border-b border-gray-200">
-                    <th v-for="h in rosterHeaders" class="text-left py-2 px-3 text-gray-500 font-medium">{{ h }}</th>
+                  <tr class="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-500">
+                    <th v-for="h in rosterHeaders" class="px-3 py-3 font-semibold">{{ h }}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in roster" class="border-b border-gray-50 hover:bg-gray-50">
-                    <td v-for="h in rosterHeaders" class="py-2 px-3">{{ row[h] ?? '' }}</td>
+                  <tr v-for="row in roster" class="border-b border-slate-100 hover:bg-slate-50">
+                    <td v-for="h in rosterHeaders" class="px-3 py-3 text-slate-700">{{ row[h] ?? '' }}</td>
                   </tr>
                 </tbody>
               </table>
-              <p v-if="!roster.length" class="text-center text-gray-400 py-6">暂无数据</p>
+              <p v-if="!roster.length" class="py-10 text-center text-sm text-slate-500">暂无统计数据</p>
             </div>
           </div>
         </section>
 
-        <!-- 答题报告 -->
-        <section v-if="page==='report'">
-          <h2 class="text-xl font-bold text-gray-800 mb-6">答题报告</h2>
-          <div v-if="!reports.length" class="card text-center text-gray-400 py-8">
-            暂无报告，请先在"评分统计"页面点击"生成报告"
+        <section v-if="page === 'report'" class="space-y-4">
+          <div class="panel p-5">
+            <h3 class="text-lg font-bold text-slate-900">答题报告</h3>
+            <p class="mt-1 text-sm text-slate-600">按题目查看得分分布与大模型归纳出的解题/失分分析。</p>
           </div>
-          <div v-for="rpt in reports" :key="rpt.qid" class="card mb-6">
-            <h3 class="text-base font-semibold text-gray-800 mb-3">{{ rpt.qid }} 答题报告</h3>
-            <div class="mb-4">
-              <p class="text-xs text-gray-500 mb-2">得分分布</p>
-              <div class="flex items-end gap-1 h-24">
-                <div v-for="(count, score) in rpt.score_distribution" :key="score"
-                     class="flex flex-col items-center">
-                  <span class="text-xs text-gray-500 mb-1">{{ count }}</span>
-                  <div class="w-8 bg-indigo-400 rounded-t" :style="{height: (count / maxDistCount(rpt) * 80) + 'px'}"></div>
-                  <span class="text-xs text-gray-400 mt-1">{{ score }}</span>
+          <div v-if="!reports.length" class="panel p-10 text-center text-slate-500">
+            暂无报告，请先在评分统计页面生成报告。
+          </div>
+          <div v-for="rpt in reports" :key="rpt.qid" class="panel p-4 lg:p-5">
+            <h4 class="mb-4 text-base font-bold text-slate-900">{{ rpt.qid }}{{ rpt.question_index != null ? '（习题集序号 ' + rpt.question_index + '）' : '' }} 答题报告</h4>
+            <div class="mb-4 rounded-xl bg-slate-50 p-4">
+              <p class="mb-3 text-sm font-semibold text-slate-700">得分分布</p>
+              <div class="flex h-32 items-end gap-2">
+                <div v-for="(count, score) in rpt.score_distribution" :key="score" class="flex flex-1 flex-col items-center">
+                  <span class="mb-1 text-xs text-slate-500">{{ count }}</span>
+                  <div class="w-full max-w-[34px] rounded-t-md bg-gradient-to-b from-brand-400 to-brand-600" :style="{ height: (count / maxDistCount(rpt) * 102) + 'px' }"></div>
+                  <span class="mt-2 text-xs text-slate-500">{{ score }}分</span>
                 </div>
               </div>
             </div>
-            <div class="prose text-sm text-gray-700" v-html="renderMd(rpt.report_text)"></div>
+            <div class="prose max-w-none text-sm text-slate-700" v-html="renderMd(rpt.report_text)"></div>
           </div>
         </section>
-
-      </div>
-    </main>
+      </main>
+    </div>
   </div>
 </div>
 
@@ -329,13 +570,13 @@ createApp({
   setup() {
     const page = ref('config');
     const navItems = [
-      { id: 'config',  icon: '📋', label: '作业配置' },
-      { id: 'segment', icon: '📄', label: '作业解析' },
-      { id: 'grade',   icon: '✏️', label: '作业评分' },
-      { id: 'review',  icon: '👁', label: '人工复核' },
-      { id: 'results', icon: '📊', label: '评阅结果' },
-      { id: 'stats',   icon: '📈', label: '评分统计' },
-      { id: 'report',  icon: '📝', label: '答题报告' },
+      { id: 'config', icon: '1', label: '作业配置', desc: '配置题目、评分标准与示例答案，支持文本和图片。' },
+      { id: 'segment', icon: '2', label: '作业解析', desc: '读取 PDF 并按题目切分作答区域，生成题目图片。' },
+      { id: 'grade', icon: '3', label: '作业评分', desc: '按题目自动评分并执行置信度驱动的重试策略。' },
+      { id: 'review', icon: '4', label: '人工复核', desc: '对低置信度样本进行人工修正并回写结果。' },
+      { id: 'results', icon: '5', label: '评阅结果', desc: '按学生查看题干、答案、得分、评语与评阅人。' },
+      { id: 'stats', icon: '6', label: '评分统计', desc: '汇总总分与评语并导出录入表。' },
+      { id: 'report', icon: '7', label: '答题报告', desc: '查看按题目的得分分布和共性错误分析。' }
     ];
 
     const configData = ref({});
@@ -350,36 +591,117 @@ createApp({
     const rosterHeaders = ref([]);
     const summary = ref({});
     const reports = ref([]);
+    const fileInputRefs = {};
 
-    const progressPct = computed(() => status.total ? Math.round(status.current / status.total * 100) : 0);
+    const progressPct = computed(() => {
+      return status.total ? Math.round((status.current / status.total) * 100) : 0;
+    });
+    const isPipelineBusy = computed(() => !['idle', 'done', 'error'].includes(status.stage));
+    const isSegmentBusy = computed(() => status.stage === 'segmentation');
+    const isGradingBusy = computed(() => status.stage === 'grading');
+    const isReportBusy = computed(() => status.stage === 'report');
+    const currentNav = computed(() => navItems.find(item => item.id === page.value) || navItems[0]);
+    const pipelineStateText = computed(() => {
+      if (status.stage === 'idle') return '待执行';
+      if (status.stage === 'done') return '已完成';
+      if (status.stage === 'error') return '异常';
+      if (status.stage === 'report') return '生成报告中';
+      if (status.stage === 'segmentation') return '切分中';
+      if (status.stage === 'grading') return '评分中';
+      return '运行中';
+    });
+    const pipelineStateClass = computed(() => {
+      if (status.stage === 'done') return 'text-emerald-600';
+      if (status.stage === 'error') return 'text-red-600';
+      if (status.stage === 'idle') return 'text-slate-600';
+      return 'text-brand-600';
+    });
 
-    const api = (path, opts) => fetch(path, opts).then(r => r.json());
+    const api = async (path, opts) => {
+      const response = await fetch(path, opts);
+      return response.json();
+    };
 
-    async function loadConfig() { configData.value = await api('/api/config'); }
-    async function loadQuestions() { questions.value = await api('/api/questions'); }
-    async function loadStatus() { Object.assign(status, await api('/api/pipeline/status')); }
-    async function loadReviewItems() { reviewItems.value = await api('/api/review'); }
-    async function loadStudentList() { studentList.value = await api('/api/results/students'); }
+    function setFileInputRef(el, qid, kind) {
+      if (!el) return;
+      fileInputRefs[`${qid}_${kind}`] = el;
+    }
+
+    function triggerFileInput(qid, kind) {
+      const input = fileInputRefs[`${qid}_${kind}`];
+      if (input) input.click();
+    }
+
+    async function onPaste(ev, qid, kind) {
+      ev.preventDefault();
+      const items = ev.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (!item.type.startsWith('image/')) continue;
+        const blob = item.getAsFile();
+        if (!blob) continue;
+        await uploadImageBlob(qid, kind, blob);
+        await loadQuestions();
+        return;
+      }
+    }
+
+    async function uploadImageBlob(qid, kind, blob) {
+      const fd = new FormData();
+      const ext = blob.type === 'image/jpeg' ? 'jpg' : 'png';
+      fd.append('file', blob, `image.${ext}`);
+      const endpoint = kind === 'question' ? 'upload_question_image' : 'upload_example_image';
+      const res = await fetch(`/api/questions/${qid}/${endpoint}`, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(await res.text());
+    }
+
+    async function loadConfig() {
+      configData.value = await api('/api/config');
+    }
+    async function loadQuestions() {
+      questions.value = await api('/api/questions');
+    }
+    async function loadStatus() {
+      Object.assign(status, await api('/api/pipeline/status'));
+    }
+    async function loadReviewItems() {
+      reviewItems.value = await api('/api/review');
+    }
+    async function loadStudentList() {
+      studentList.value = await api('/api/results/students');
+    }
     async function loadRoster() {
       roster.value = await api('/api/stats/roster');
       rosterHeaders.value = roster.value.length ? Object.keys(roster.value[0]) : [];
     }
-    async function loadSummary() { summary.value = await api('/api/stats/summary'); }
-    async function loadReports() { reports.value = await api('/api/pipeline/reports'); }
+    async function loadSummary() {
+      summary.value = await api('/api/stats/summary');
+    }
+    async function loadReports() {
+      reports.value = await api('/api/pipeline/reports');
+    }
 
     function addQuestion() {
       const idx = questions.value.length + 1;
       questions.value.push({
-        qid: 'Q' + idx, score: 10, rubric: '', question_text: '',
-        example_answer_text: '', question_images: [], example_answer_images: []
+        qid: `Q${idx}`,
+        question_index: null,
+        score: 10,
+        rubric: '',
+        question_text: '',
+        example_answer_text: '',
+        question_images: [],
+        example_answer_images: []
       });
     }
 
     async function saveQuestion(q) {
+      const idx = q.question_index;
+      const questionIndex = (idx != null && idx !== '' && !Number.isNaN(Number(idx))) ? Number(idx) : null;
       await api(`/api/questions/${q.qid}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(q)
+        body: JSON.stringify({ ...q, question_index: questionIndex })
       });
       await loadQuestions();
     }
@@ -391,31 +713,48 @@ createApp({
     }
 
     async function uploadImage(qid, kind, event) {
-      const file = event.target.files[0];
+      const file = event.target.files?.[0];
       if (!file) return;
       const fd = new FormData();
       fd.append('file', file);
       const endpoint = kind === 'question' ? 'upload_question_image' : 'upload_example_image';
-      await fetch(`/api/questions/${qid}/${endpoint}`, { method: 'POST', body: fd });
+      const res = await fetch(`/api/questions/${qid}/${endpoint}`, { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(await res.text());
       await loadQuestions();
+      event.target.value = '';
     }
 
     let pollTimer = null;
     async function runPipeline(action) {
+      if (pollTimer) clearInterval(pollTimer);
       lastAction.value = action;
       await api('/api/pipeline/reset', { method: 'POST' });
       await api(`/api/pipeline/${action}`, { method: 'POST' });
+      await loadStatus();
       pollTimer = setInterval(async () => {
         await loadStatus();
-        if (status.stage === 'done' || status.stage === 'error' || status.stage === 'idle') {
+        if (['done', 'error', 'idle'].includes(status.stage)) {
           clearInterval(pollTimer);
-          if (action === 'report') { await loadReports(); await loadRoster(); await loadSummary(); }
+          if (action === 'report') {
+            await loadReports();
+            await loadRoster();
+            await loadSummary();
+          }
         }
       }, 1500);
     }
+    async function cancelPipeline() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = null;
+      await api('/api/pipeline/cancel', { method: 'POST' });
+      await loadStatus();
+    }
 
     async function loadStudentResult() {
-      if (!selectedStudent.value) { currentResult.value = null; return; }
+      if (!selectedStudent.value) {
+        currentResult.value = null;
+        return;
+      }
       currentResult.value = await api(`/api/results/${selectedStudent.value}`);
     }
 
@@ -424,7 +763,12 @@ createApp({
       await api(`/api/review/${stem}/${item.qid}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ score: item.score, confidence: item.confidence, summary: item.summary, comments: item.comments })
+        body: JSON.stringify({
+          score: item.score,
+          confidence: item.confidence,
+          summary: item.summary,
+          comments: item.comments
+        })
       });
       await loadReviewItems();
     }
@@ -440,7 +784,11 @@ createApp({
     }
 
     function renderMd(text) {
-      try { return marked.parse(text || ''); } catch { return text; }
+      try {
+        return marked.parse(text || '');
+      } catch {
+        return text;
+      }
     }
 
     function maxDistCount(rpt) {
@@ -448,27 +796,66 @@ createApp({
       return Math.max(1, ...vals);
     }
 
-    watch(page, (p) => {
-      if (p === 'review') loadReviewItems();
-      if (p === 'results') { loadStudentList(); loadQuestions(); }
-      if (p === 'stats') { loadRoster(); loadSummary(); }
-      if (p === 'report') loadReports();
-      if (p === 'config') loadQuestions();
+    watch(page, async p => {
+      if (p === 'review') await loadReviewItems();
+      if (p === 'results') {
+        await loadStudentList();
+        await loadQuestions();
+      }
+      if (p === 'stats') {
+        await loadRoster();
+        await loadSummary();
+      }
+      if (p === 'report') await loadReports();
+      if (p === 'config') await loadQuestions();
     });
 
     onMounted(async () => {
       await loadConfig();
       await loadQuestions();
       await loadStatus();
+      await loadReviewItems();
     });
 
     return {
-      page, navItems, configData, questions, status, lastAction, progressPct,
-      reviewItems, studentList, selectedStudent, currentResult,
-      roster, rosterHeaders, summary, reports,
-      addQuestion, saveQuestion, deleteQuestion, uploadImage,
-      runPipeline, loadStudentResult, submitReview,
-      confidenceBadge, getQuestionByQid, renderMd, maxDistCount,
+      page,
+      navItems,
+      currentNav,
+      configData,
+      questions,
+      status,
+      lastAction,
+      progressPct,
+      isPipelineBusy,
+      isSegmentBusy,
+      isGradingBusy,
+      isReportBusy,
+      pipelineStateText,
+      pipelineStateClass,
+      reviewItems,
+      studentList,
+      selectedStudent,
+      currentResult,
+      roster,
+      rosterHeaders,
+      summary,
+      reports,
+      addQuestion,
+      saveQuestion,
+      deleteQuestion,
+      uploadImage,
+      uploadImageBlob,
+      runPipeline,
+      cancelPipeline,
+      loadStudentResult,
+      submitReview,
+      triggerFileInput,
+      setFileInputRef,
+      onPaste,
+      confidenceBadge,
+      getQuestionByQid,
+      renderMd,
+      maxDistCount
     };
   }
 }).mount('#app');

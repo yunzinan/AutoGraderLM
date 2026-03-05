@@ -13,27 +13,33 @@ assignment_configuration:
   xlsx_in_path: "./图论-作业1_学生名单列表 .xls"
 
 assignment_segmentation:
+  num_workers: 5
   max_retry: 3
   llm: 
-    model: "gemini-3-flash-preview"
+    model: "gpt-5"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/segmentation.jinja"
   
 
 assignment_grading:
+  num_workers: 5
   max_retry: 3
   llm: 
-    model: "gemini-3-flash-preview"
+    model: "gpt-5-mini"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/grading.jinja"
 
 
 assignment_report:
   llm:
-    model: "gemini-3-flash-preview"
+    model: "gpt-5-mini"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/report.jinja"
   xlsx_out_path: "./图论-作业1_学生名单列表_评分统计.xlsx"
 
+# 大模型对话日志，用于后台调试（记录请求 prompt 与响应内容）
+llm_log:
+  enabled: true
+  path: "./logs/llm_dialogue.log"
 
 

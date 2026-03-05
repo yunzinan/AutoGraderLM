@@ -14,6 +14,10 @@ from pydantic import BaseModel, Field
 
 class QuestionConfig(BaseModel):
     qid: str
+    question_index: Optional[int] = Field(
+        default=None,
+        description="题目在习题集中的序号，学生答卷上可能写该序号（如 2. 4. 7. 8.），留空表示按作业内顺序 1、2、3…",
+    )
     score: int = Field(ge=0, le=100)
     rubric: str = ""
     question_text: str = ""
@@ -60,6 +64,8 @@ class GradingOutput(BaseModel):
 class GradingRecord(BaseModel):
     filename: str
     qid: str
+    """题目在习题集中的序号，与 QuestionConfig.question_index 一致"""
+    question_index: Optional[int] = None
     answer: list[str] = Field(default_factory=list)
     grader: str = ""
     score: int = Field(ge=0, default=0)
@@ -92,5 +98,7 @@ class PipelineStatus(BaseModel):
 
 class QuestionReport(BaseModel):
     qid: str
+    """题目在习题集中的序号"""
+    question_index: Optional[int] = None
     score_distribution: dict[int, int] = Field(default_factory=dict)
     report_text: str = ""

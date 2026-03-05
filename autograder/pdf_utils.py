@@ -11,6 +11,29 @@ from PIL import Image
 DPI = 200
 ZOOM = DPI / 72
 
+# 切分裁剪时在 bbox 四周外扩的像素数，避免裁得太紧漏掉边上的字或半行
+CROP_PADDING_PX = 24
+# 底部多留一点，减少结尾最后一两行被裁短
+CROP_PADDING_BOTTOM_PX = 48
+
+
+def expand_bbox(
+    bbox: list[int],
+    image_width: int,
+    image_height: int,
+    padding: int = CROP_PADDING_PX,
+    padding_bottom: int | None = None,
+) -> list[int]:
+    """将 bbox 四边外扩，并限制在图像范围内。底部可用 padding_bottom 单独加大，避免结尾裁短。"""
+    if padding_bottom is None:
+        padding_bottom = padding
+    x1, y1, x2, y2 = bbox
+    x1 = max(0, x1 - padding)
+    y1 = max(0, y1 - padding)
+    x2 = min(image_width, x2 + padding)
+    y2 = min(image_height, y2 + padding_bottom)
+    return [x1, y1, x2, y2]
+
 
 def render_pdf_pages(pdf_path: str | Path) -> list[Image.Image]:
     """Render every page of *pdf_path* as a PIL Image."""
@@ -44,7 +67,10 @@ def save_answer_images(
 ) -> list[str]:
     """Crop regions from rendered pages and save as PNGs.
 
-    *regions* – list of {"page": int, "bbox": [x1,y1,x2,y2]}.
+    保存路径符合文档：./answers/{PDF文件名}/{qid}-{page-idx}.png，
+    其中 page-idx 为该题下区域的序号（从 0 开始）。
+
+    *regions* – list of {"qid": str, "page": int, "bbox": [x1,y1,x2,y2]}.
     Returns the list of saved file paths.
     """
     pdf_stem = Path(pdf_path).stem
@@ -52,13 +78,17 @@ def save_answer_images(
     out_base.mkdir(parents=True, exist_ok=True)
 
     saved: list[str] = []
-    for r in regions:
-        page_idx = r["page"] - 1  # 1-indexed -> 0-indexed
-        if page_idx < 0 or page_idx >= len(page_images):
+    for page_idx, r in enumerate(regions):  # page_idx = 文档中的 page-idx（该题下区域序号）
+        page_1based = r["page"]
+        img_idx = page_1based - 1  # 1-indexed -> 0-indexed
+        if img_idx < 0 or img_idx >= len(page_images):
             continue
-        img = crop_region(page_images[page_idx], r["bbox"])
+        img = page_images[img_idx]
+        w, h = img.size
+        expanded = expand_bbox(r["bbox"], w, h, padding_bottom=CROP_PADDING_BOTTOM_PX)
+        img = crop_region(img, expanded)
         qid = r.get("qid", "unknown")
-        fname = f"{qid}-{r['page']}.png"
+        fname = f"{qid}-{page_idx}.png"  # 文档：./answers/{PDF文件名}/{qid}-{page-idx}.png
         path = out_base / fname
         img.save(str(path))
         saved.append(str(path))

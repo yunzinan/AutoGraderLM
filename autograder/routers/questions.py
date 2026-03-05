@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, File, UploadFile
 from pydantic import BaseModel
@@ -59,6 +59,7 @@ def get_question(qid: str) -> QuestionConfig | dict:
 
 
 class QuestionUpdate(BaseModel):
+    question_index: Optional[int] = None
     score: int = 0
     rubric: str = ""
     question_text: str = ""
@@ -70,6 +71,7 @@ def upsert_question(qid: str, body: QuestionUpdate) -> QuestionConfig:
     existing = _load_config(qid)
     q = QuestionConfig(
         qid=qid,
+        question_index=body.question_index,
         score=body.score,
         rubric=body.rubric,
         question_text=body.question_text,

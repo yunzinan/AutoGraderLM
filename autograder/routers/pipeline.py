@@ -55,6 +55,10 @@ async def start_segmentation() -> dict:
     _status.errors = []
     questions = load_all_questions()
     pdfs = _list_pdfs()
+    num_pdfs = len(pdfs)
+    _status.total = num_pdfs
+    _status.current = 0
+    _status.message = f"即将切分 {num_pdfs} 份作业…" if num_pdfs else "未找到 PDF 文件"
 
     async def _run():
         global _answer_map
@@ -69,7 +73,7 @@ async def start_segmentation() -> dict:
             _status.errors.append(str(e))
 
     _running_task = asyncio.create_task(_run())
-    return {"ok": True, "num_pdfs": len(pdfs)}
+    return {"ok": True, "num_pdfs": num_pdfs}
 
 
 @router.post("/grade")
@@ -143,6 +147,32 @@ def get_answer_map() -> dict:
 @router.get("/reports")
 def get_reports() -> list:
     return [r.model_dump() for r in _reports]
+
+
+@router.post("/cancel")
+async def cancel_pipeline() -> dict:
+    """取消当前正在运行的切分/评分/报告任务。"""
+    global _running_task
+    if _running_task is None:
+        return {"ok": True, "message": "没有正在运行的任务"}
+    if _running_task.done():
+        _running_task = None
+        _status.stage = "idle"
+        _status.message = ""
+        return {"ok": True, "message": "任务已结束"}
+    _running_task.cancel()
+    try:
+        await _running_task
+    except asyncio.CancelledError:
+        pass
+    finally:
+        _running_task = None
+        _status.stage = "idle"
+        _status.message = "已取消"
+        _status.current = 0
+        _status.total = 0
+        _status.errors = []
+    return {"ok": True, "message": "已取消"}
 
 
 @router.post("/reset")

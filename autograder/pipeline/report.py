@@ -10,7 +10,7 @@ from jinja2 import Template
 
 from autograder.config import AppConfig
 from autograder.excel_utils import export_graded_xlsx, read_student_roster
-from autograder.llm import build_llm
+from autograder.llm import build_llm, invoke_with_log
 from autograder.models import (
     GradingRecord,
     QuestionConfig,
@@ -86,10 +86,12 @@ async def generate_question_report(
     llm = build_llm(report_cfg.llm)
     from langchain_core.messages import HumanMessage
 
-    resp = llm.invoke([HumanMessage(content=prompt_text)])
+    msg = HumanMessage(content=prompt_text)
+    resp = invoke_with_log(llm, [msg], {"stage": "report", "qid": qid})
 
     return QuestionReport(
         qid=qid,
+        question_index=getattr(question, "question_index", None),
         score_distribution=score_dist,
         report_text=resp.content,
     )
