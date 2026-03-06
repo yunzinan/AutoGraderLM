@@ -106,7 +106,7 @@ prompt设计：要求模型不要直接给出回答，而是首先解析答案�
         "image_2_path.png",
         ...
     ],
-    "grader": string, // 评阅人：LLM（读取`config.yaml`中的`assignment_grading`配置中的model name） /  人类(即交由教师进行人工复核)
+    "grader": string, // 评阅人：LLM 时为模型名（见 config 中 assignment_grading）；人工复核后为 "human"，前端显示「人工评阅」
     "score": int[0-MAX_SCORE],
     "confidence": int[0-4], // 0：丢失全部作答或完全不能理解作答 1：丢失部分作答或不能理解部分作答 2：作答完整，但思路无法判断是否正确 3：作答完整，基本能够理解并判断是否正确 4：作答完整，完全能够理解并判断是否正确 
     "summary": string, // 对该作答的总结，采用什么样的思路进行作答
@@ -126,7 +126,7 @@ prompt设计：要求模型不要直接给出回答，而是首先解析答案�
 1. 题目的题干内容（文本或图片）和题目分值
 2. 该题的作答图片（image_1, image_2, ...）
 3. 该题的评分结果：得分、评分信心、总结、评语
-4. 评阅人：LLM（读取`config.yaml`中的`assignment_grading`配置中的model name） /  人类(即交由教师进行人工复核)
+4. 评阅人：LLM 时为模型名；人工复核后为 "human"，界面显示「人工评阅」
 
 ## 4. 统计分析
 

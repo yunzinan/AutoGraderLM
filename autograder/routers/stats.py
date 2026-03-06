@@ -8,24 +8,56 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
 from autograder.config import get_config
-from autograder.excel_utils import read_student_roster
+from autograder.excel_utils import (
+    HEADER_COMMENT,
+    HEADER_SCORE,
+    HEADER_STUDENT_ID,
+    read_student_roster,
+)
 from autograder.pipeline.grading import load_all_results
-from autograder.pipeline.report import compute_score_distribution
+from autograder.pipeline.report import build_student_comment, compute_score_distribution
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 
+def _roster_with_live_scores() -> list[dict]:
+    """以持久化评阅结果（results 目录）为数据源构建 roster，不论是否有人工复核。
+    每个有结果文件的学生一行；若配置了 xlsx，则合并 xlsx 中的其他列（如姓名等）。
+    """
+    cfg = get_config()
+    in_path = Path(cfg.assignment_configuration.xlsx_in_path)
+    results = load_all_results()
+
+    # 以 results 为数据源：每个学生结果对应一行
+    xlsx_by_id: dict[str, dict] = {}
+    if in_path.exists():
+        for row in read_student_roster(in_path):
+            sid = str(row.get(HEADER_STUDENT_ID, "") or row.get("学号", "")).strip()
+            if sid:
+                xlsx_by_id[sid] = dict(row)
+
+    roster = []
+    for sr in results:
+        sid = str(sr.student_id).strip()
+        row = {
+            HEADER_STUDENT_ID: sr.student_id,
+            "姓名": sr.student_name,
+            HEADER_SCORE: sr.total_score,
+            HEADER_COMMENT: build_student_comment(sr.records),
+        }
+        if sid in xlsx_by_id:
+            row.update(xlsx_by_id[sid])
+            row[HEADER_STUDENT_ID] = sr.student_id
+            row[HEADER_SCORE] = sr.total_score
+            row[HEADER_COMMENT] = build_student_comment(sr.records)
+        roster.append(row)
+    return roster
+
+
 @router.get("/roster")
 def get_roster() -> list[dict]:
-    """Return the student roster (with scores if exported)."""
-    cfg = get_config()
-    out_path = Path(cfg.assignment_report.xlsx_out_path)
-    if out_path.exists():
-        return read_student_roster(out_path)
-    in_path = cfg.assignment_configuration.xlsx_in_path
-    if Path(in_path).exists():
-        return read_student_roster(in_path)
-    return []
+    """Return the student roster with live scores/comments from current results."""
+    return _roster_with_live_scores()
 
 
 @router.get("/distribution/{qid}")

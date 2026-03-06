@@ -11,30 +11,6 @@ from PIL import Image
 DPI = 200
 ZOOM = DPI / 72
 
-# 切分裁剪时在 bbox 四周外扩的像素数，避免裁得太紧漏掉边上的字或半行
-CROP_PADDING_PX = 24
-# 底部多留一点，减少结尾最后一两行被裁短
-CROP_PADDING_BOTTOM_PX = 48
-
-
-def expand_bbox(
-    bbox: list[int],
-    image_width: int,
-    image_height: int,
-    padding: int = CROP_PADDING_PX,
-    padding_bottom: int | None = None,
-) -> list[int]:
-    """将 bbox 四边外扩，并限制在图像范围内。底部可用 padding_bottom 单独加大，避免结尾裁短。"""
-    if padding_bottom is None:
-        padding_bottom = padding
-    x1, y1, x2, y2 = bbox
-    x1 = max(0, x1 - padding)
-    y1 = max(0, y1 - padding)
-    x2 = min(image_width, x2 + padding)
-    y2 = min(image_height, y2 + padding_bottom)
-    return [x1, y1, x2, y2]
-
-
 def render_pdf_pages(pdf_path: str | Path) -> list[Image.Image]:
     """Render every page of *pdf_path* as a PIL Image."""
     doc = fitz.open(str(pdf_path))
@@ -85,8 +61,8 @@ def save_answer_images(
             continue
         img = page_images[img_idx]
         w, h = img.size
-        expanded = expand_bbox(r["bbox"], w, h, padding_bottom=CROP_PADDING_BOTTOM_PX)
-        img = crop_region(img, expanded)
+        # 不外扩 margin，选中的范围即裁剪范围；crop_region 内部会做边界裁剪
+        img = crop_region(img, r["bbox"])
         qid = r.get("qid", "unknown")
         fname = f"{qid}-{page_idx}.png"  # 文档：./answers/{PDF文件名}/{qid}-{page-idx}.png
         path = out_base / fname

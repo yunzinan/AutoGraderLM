@@ -167,10 +167,21 @@
     .prose p { margin: 0.45em 0; }
     .prose ul { list-style: disc; padding-left: 1.25rem; }
     .prose ol { list-style: decimal; padding-left: 1.25rem; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .animate-spin { animation: spin 0.9s linear infinite; }
   </style>
 </head>
 <body class="min-h-screen">
-<div id="app" v-cloak class="px-5 py-6 lg:px-8 lg:py-8">
+<div id="app" v-cloak class="px-5 py-6 lg:px-8 lg:py-8" :class="{ 'pt-14': isReportBusy }">
+  <!-- 生成报告中全局提示条：不阻塞其他操作，始终可见 -->
+  <div v-if="isReportBusy" class="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 bg-brand-600 px-4 py-3 text-white shadow-lg">
+    <svg class="h-5 w-5 flex-shrink-0 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+    <span class="font-medium">正在生成报告中：{{ status.message }}</span>
+    <div class="flex-1 max-w-xs h-1.5 rounded-full bg-white/30 overflow-hidden">
+      <div class="h-full rounded-full bg-white transition-all duration-300" :style="{ width: progressPct + '%' }"></div>
+    </div>
+    <span class="text-sm text-brand-100">{{ progressPct }}%</span>
+  </div>
   <div class="mx-auto max-w-[1480px]">
     <div class="grid grid-cols-1 gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
       <aside class="panel p-4 lg:p-5">
@@ -357,6 +368,105 @@
               <p v-for="e in status.errors" class="text-sm text-red-700">- {{ e }}</p>
             </div>
           </div>
+
+          <div class="panel p-5 mt-4">
+            <h3 class="text-lg font-bold text-slate-900">人工重新切分</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-600">
+              选择一份已切分的作业，在 for_llm 页面上调整每道题的框选区域（可拖动、新增、删除框），保存后将更新该作业的 segment 并重新生成答案图。
+            </p>
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+              <label class="form-label mb-0">选择作业</label>
+              <select
+                class="input max-w-xs"
+                v-model="segmentEditorSelected"
+                @change="loadSegmentEditorAssignment"
+              >
+                <option value="">-- 请选择 --</option>
+                <option v-for="a in segmentEditorAssignments" :key="a.stem" :value="a.stem">{{ a.label }}</option>
+              </select>
+              <template v-if="segmentEditorData && !segmentEditorData.error">
+                <select class="input max-w-[120px]" v-model="segmentEditorNewBboxQid" v-show="segmentEditorAddMode">
+                  <option value="">题目</option>
+                  <option v-for="qid in (segmentEditorData.qids || [])" :key="qid" :value="qid">{{ qid }}</option>
+                </select>
+                <button type="button" class="btn btn-secondary" @click="segmentEditorAddMode = !segmentEditorAddMode">
+                  {{ segmentEditorAddMode ? '取消新增' : '新增框' }}
+                </button>
+                <button type="button" class="btn btn-danger" :disabled="!segmentEditorSelectedBbox" @click="deleteSegmentEditorBbox">
+                  删除选中框
+                </button>
+                <button type="button" class="btn btn-primary" :disabled="segmentEditorSaving" @click="saveSegmentEditor">
+                  {{ segmentEditorSaving ? '保存中…' : '保存' }}
+                </button>
+              </template>
+            </div>
+            <div v-if="segmentEditorLoadError" class="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{{ segmentEditorLoadError }}</div>
+            <div v-if="segmentEditorData && segmentEditorData.error" class="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{{ segmentEditorData.error }}</div>
+            <div v-if="segmentEditorLoading" class="mt-4 text-slate-500">加载中…</div>
+            <div v-else-if="segmentEditorData && !segmentEditorData.error && segmentEditorData.pages && segmentEditorData.pages.length" class="mt-4 space-y-6">
+              <p class="text-sm text-slate-600">从上到下依次为作业各页（for_llm）。框右上角为题目编号。可拖动框移动、新增框（先选题目再在图上拖拽绘制）、选中后删除。</p>
+              <div
+                v-for="(pg, pageIdx) in segmentEditorData.pages"
+                :key="pageIdx"
+                class="segment-page-wrap inline-block relative"
+              >
+                <div class="text-sm font-medium text-slate-600 mb-1">第 {{ pageIdx + 1 }} 页</div>
+                <div
+                  class="relative inline-block max-w-full segment-page-canvas"
+                  :data-page-idx="pageIdx"
+                  :style="segmentPageWrapperStyle(pg)"
+                  @mousedown="onSegmentPageMouseDown($event, pageIdx)"
+                  @mousemove="onSegmentPageMouseMove($event, pageIdx)"
+                  @mouseup="onSegmentPageMouseUp($event, pageIdx)"
+                  @mouseleave="onSegmentPageMouseUp($event, pageIdx)"
+                >
+                  <img
+                    :ref="el => setSegmentImgRef(el, pageIdx)"
+                    :src="pg.url"
+                    :alt="'Page ' + (pageIdx + 1)"
+                    class="segment-page-img block w-full h-auto select-none pointer-events-none"
+                    draggable="false"
+                  />
+                  <div class="segment-overlay absolute inset-0 w-full h-full pointer-events-none">
+                    <div
+                      v-for="(q, qIdx) in (segmentEditorData.questions || [])"
+                      :key="'q-' + qIdx"
+                      class="pointer-events-auto"
+                    >
+                      <div
+                        v-for="(reg, rIdx) in (q.regions || [])"
+                        v-show="reg.page === pageIdx + 1"
+                        :key="'r-' + qIdx + '-' + rIdx"
+                        class="segment-bbox absolute border-2 border-brand-500 bg-brand-500/10 cursor-move flex items-start justify-end"
+                        :class="{ 'ring-2 ring-amber-400': isSegmentBboxSelected(qIdx, rIdx, pageIdx) }"
+                        :style="segmentBboxStyle(reg, pg.width, pg.height)"
+                        @mousedown.prevent="selectSegmentBbox(qIdx, rIdx, pageIdx); startDrag($event, pageIdx, qIdx, rIdx)"
+                      >
+                        <span class="segment-bbox-label text-xs font-bold text-white bg-brand-600 px-1.5 py-0.5 rounded-bl">{{ q.qid }}</span>
+                        <template v-if="isSegmentBboxSelected(qIdx, rIdx, pageIdx)">
+                          <div class="segment-bbox-handle absolute w-3 h-3 bg-amber-400 border-2 border-amber-600 rounded-full cursor-nw-resize" style="left:0; top:0; transform: translate(-50%, -50%);" @mousedown.stop.prevent="startResize($event, pageIdx, qIdx, rIdx, 'nw')"></div>
+                          <div class="segment-bbox-handle absolute w-3 h-3 bg-amber-400 border-2 border-amber-600 rounded-full cursor-ne-resize" style="right:0; top:0; transform: translate(50%, -50%);" @mousedown.stop.prevent="startResize($event, pageIdx, qIdx, rIdx, 'ne')"></div>
+                          <div class="segment-bbox-handle absolute w-3 h-3 bg-amber-400 border-2 border-amber-600 rounded-full cursor-sw-resize" style="left:0; bottom:0; transform: translate(-50%, 50%);" @mousedown.stop.prevent="startResize($event, pageIdx, qIdx, rIdx, 'sw')"></div>
+                          <div class="segment-bbox-handle absolute w-3 h-3 bg-amber-400 border-2 border-amber-600 rounded-full cursor-se-resize" style="right:0; bottom:0; transform: translate(50%, 50%);" @mousedown.stop.prevent="startResize($event, pageIdx, qIdx, rIdx, 'se')"></div>
+                        </template>
+                      </div>
+                    </div>
+                    <div
+                      v-if="segmentEditorAddMode && segmentEditorNewBboxQid && segmentEditorDrawRect[pageIdx]"
+                      class="segment-draw-preview absolute border-2 border-dashed border-amber-500 bg-amber-500/20 pointer-events-none"
+                      :style="segmentDrawPreviewStyle(pageIdx)"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <p v-else-if="segmentEditorData && !segmentEditorData.error && segmentEditorData.pages && segmentEditorData.pages.length && (!segmentEditorData.questions || !segmentEditorData.questions.length)" class="mt-4 text-amber-600 text-sm">
+              当前无框选数据。请先执行上方「开始切分」以生成大模型框选结果；若已执行过，请重新执行一次「开始切分」。
+            </p>
+            <div v-else-if="segmentEditorData && !segmentEditorData.error && (!segmentEditorData.pages || !segmentEditorData.pages.length)" class="mt-4 text-slate-500">
+              该作业暂无 for_llm 页面，请先执行上方「开始切分」。
+            </div>
+          </div>
         </section>
 
         <section v-if="page === 'grade'" class="space-y-4">
@@ -400,6 +510,20 @@
               </div>
               <span class="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ item.qid }}</span>
             </div>
+
+            <!-- 题目信息：题干、题目图、评分标准 -->
+            <div v-if="getQuestionByQid(item.qid)" class="mb-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+              <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">题目信息</p>
+              <p v-if="getQuestionByQid(item.qid).question_text" class="mb-2 text-sm text-slate-700">{{ getQuestionByQid(item.qid).question_text }}</p>
+              <div class="mb-2 flex flex-wrap gap-2">
+                <img v-for="img in getQuestionByQid(item.qid).question_images" :key="img" :src="'/files/' + img" class="max-h-32 rounded-lg border border-slate-200 bg-white p-1" />
+              </div>
+              <div v-if="getQuestionByQid(item.qid).rubric" class="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                <p class="mb-1 text-xs font-semibold text-slate-500">评分标准</p>
+                <p class="whitespace-pre-wrap">{{ getQuestionByQid(item.qid).rubric }}</p>
+              </div>
+            </div>
+
             <div class="mb-3 flex flex-wrap gap-2">
               <img v-for="img in item.answer" :src="'/files/' + img" class="max-h-44 rounded-lg border border-slate-200 bg-white p-1" />
             </div>
@@ -407,16 +531,18 @@
             <div class="mb-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><b>LLM 评语：</b>{{ item.comments }}</div>
             <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
               <div>
-                <label class="form-label">分数</label>
-                <input type="number" class="input" v-model.number="item.score" min="0" />
+                <label class="form-label">分数<span v-if="getQuestionByQid(item.qid)" class="font-normal text-slate-500">（满分 {{ getQuestionByQid(item.qid).score }} 分）</span></label>
+                <input type="number" class="input" v-model.number="item.score" :min="0" :max="getQuestionByQid(item.qid) ? getQuestionByQid(item.qid).score : 999" />
               </div>
               <div>
                 <label class="form-label">置信度</label>
-                <input type="number" class="input" v-model.number="item.confidence" min="0" max="4" />
+                <select class="input" v-model.number="item.confidence">
+                  <option v-for="opt in confidenceOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                </select>
               </div>
               <div class="md:col-span-2">
                 <label class="form-label">评语</label>
-                <input class="input" v-model="item.comments" />
+                <textarea class="input min-h-[100px] resize-y" rows="4" v-model="item.comments" placeholder="可多行填写评语"></textarea>
               </div>
             </div>
             <div class="mt-4 flex justify-end">
@@ -431,7 +557,7 @@
             <p class="mt-1 text-sm text-slate-600">按学生查看每道题的题干、作答图片与评分详情。</p>
             <div class="mt-4">
               <label class="form-label">选择学生</label>
-              <select class="input max-w-lg" v-model="selectedStudent" @change="loadStudentResult">
+              <select class="input max-w-lg" v-model="selectedStudent" @change="loadStudentResult" :disabled="studentResultLoading">
                 <option value="">-- 请选择 --</option>
                 <option v-for="s in studentList" :value="s.filename_stem">
                   {{ s.student_id }} - {{ s.student_name }}（总分: {{ s.total_score }}）
@@ -440,7 +566,11 @@
             </div>
           </div>
 
-          <div v-if="currentResult" class="panel p-4 lg:p-5">
+          <div v-if="studentResultLoading" class="panel p-10 flex flex-col items-center justify-center gap-3 text-slate-500">
+            <svg class="h-8 w-8 animate-spin text-brand-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            <p class="text-sm font-medium">加载作业详情中…</p>
+          </div>
+          <div v-else-if="currentResult" class="panel p-4 lg:p-5">
             <div class="mb-4 flex flex-wrap items-center gap-3">
               <h4 class="text-xl font-bold text-slate-900">{{ currentResult.student_name }}（{{ currentResult.student_id }}）</h4>
               <span class="badge bg-brand-100 text-brand-700">总分 {{ currentResult.total_score }}</span>
@@ -451,7 +581,7 @@
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="badge" :class="confidenceBadge(r.confidence)">confidence {{ r.confidence }}</span>
                   <span class="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ r.score }} 分</span>
-                  <span class="text-xs text-slate-500">评阅人: {{ r.grader }}</span>
+                  <span class="text-xs text-slate-500">评阅人: {{ r.grader === 'human' ? '人工评阅' : r.grader }}</span>
                 </div>
               </div>
               <div v-if="getQuestionByQid(r.qid)" class="mb-3 rounded-lg bg-slate-50 p-3">
@@ -586,12 +716,27 @@ createApp({
     const reviewItems = ref([]);
     const studentList = ref([]);
     const selectedStudent = ref('');
+    const studentResultLoading = ref(false);
     const currentResult = ref(null);
     const roster = ref([]);
     const rosterHeaders = ref([]);
     const summary = ref({});
     const reports = ref([]);
     const fileInputRefs = {};
+    // 人工重新切分
+    const segmentEditorAssignments = ref([]);
+    const segmentEditorSelected = ref('');
+    const segmentEditorData = ref(null);
+    const segmentEditorLoadError = ref('');
+    const segmentEditorLoading = ref(false);
+    const segmentEditorSaving = ref(false);
+    const segmentEditorAddMode = ref(false);
+    const segmentEditorNewBboxQid = ref('');
+    const segmentEditorSelectedBbox = ref(null);
+    const segmentEditorDrag = ref(null);
+    const segmentEditorResize = ref(null);
+    const segmentEditorDrawStart = ref(null);
+    const segmentEditorDrawRect = ref({});
 
     const progressPct = computed(() => {
       return status.total ? Math.round((status.current / status.total) * 100) : 0;
@@ -619,7 +764,15 @@ createApp({
 
     const api = async (path, opts) => {
       const response = await fetch(path, opts);
-      return response.json();
+      const text = await response.text();
+      let data;
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        return { error: response.ok ? '无效响应' : (response.statusText || `HTTP ${response.status}`) };
+      }
+      if (!response.ok && !data.error) data.error = response.statusText || `HTTP ${response.status}`;
+      return data;
     };
 
     function setFileInputRef(el, qid, kind) {
@@ -755,7 +908,14 @@ createApp({
         currentResult.value = null;
         return;
       }
-      currentResult.value = await api(`/api/results/${selectedStudent.value}`);
+      studentResultLoading.value = true;
+      currentResult.value = null;
+      try {
+        const data = await api(`/api/results/${selectedStudent.value}`);
+        currentResult.value = data && !data.error ? data : null;
+      } finally {
+        studentResultLoading.value = false;
+      }
     }
 
     async function submitReview(item) {
@@ -771,7 +931,20 @@ createApp({
         })
       });
       await loadReviewItems();
+      // 人工复核会更新持久化结果文件，刷新评阅结果与评分统计以保持一致
+      await loadStudentList();
+      if (selectedStudent.value === stem) await loadStudentResult();
+      await loadRoster();
+      await loadSummary();
     }
+
+    const confidenceOptions = [
+      { value: 0, label: '0 - 丢失全部作答或完全不能理解作答' },
+      { value: 1, label: '1 - 丢失部分作答或不能理解部分作答' },
+      { value: 2, label: '2 - 作答完整，但思路无法判断是否正确' },
+      { value: 3, label: '3 - 作答完整，基本能够理解并判断是否正确' },
+      { value: 4, label: '4 - 作答完整，完全能够理解并判断是否正确' }
+    ];
 
     function confidenceBadge(c) {
       if (c >= 3) return 'bg-emerald-100 text-emerald-700';
@@ -796,8 +969,256 @@ createApp({
       return Math.max(1, ...vals);
     }
 
+    async function loadSegmentEditorAssignments() {
+      segmentEditorLoadError.value = '';
+      try {
+        segmentEditorAssignments.value = await api('/api/pipeline/segment-editor/assignments');
+      } catch (e) {
+        segmentEditorLoadError.value = e.message || '加载作业列表失败';
+      }
+    }
+    async function loadSegmentEditorAssignment() {
+      if (!segmentEditorSelected.value) {
+        segmentEditorData.value = null;
+        return;
+      }
+      segmentEditorLoading.value = true;
+      segmentEditorLoadError.value = '';
+      segmentEditorData.value = null;
+      segmentEditorSelectedBbox.value = null;
+      segmentEditorDrag.value = null;
+      segmentEditorDrawStart.value = null;
+      segmentEditorDrawRect.value = {};
+      try {
+        const data = await api(`/api/pipeline/segment-editor/assignment/${encodeURIComponent(segmentEditorSelected.value)}`);
+        segmentEditorData.value = data;
+        if (data.error) segmentEditorLoadError.value = data.error;
+      } catch (e) {
+        segmentEditorLoadError.value = e.message || '加载失败';
+      } finally {
+        segmentEditorLoading.value = false;
+      }
+    }
+    function segmentPageWrapperStyle(pg) {
+      if (!pg || !pg.width || !pg.height) return {};
+      return {
+        maxWidth: '100%',
+        width: Math.min(pg.width, 1024) + 'px',
+        aspectRatio: pg.width + ' / ' + pg.height
+      };
+    }
+    function clampBboxToPage(bbox, pageW, pageH) {
+      if (!bbox || bbox.length < 4 || !pageW || !pageH) return bbox;
+      const [x1, y1, x2, y2] = bbox;
+      const left = Math.max(0, Math.min(x1, x2));
+      const right = Math.min(pageW, Math.max(x1, x2));
+      const top = Math.max(0, Math.min(y1, y2));
+      const bottom = Math.min(pageH, Math.max(y1, y2));
+      return [Math.min(left, right), Math.min(top, bottom), Math.max(left, right), Math.max(top, bottom)];
+    }
+    function segmentBboxStyle(reg, imgW, imgH) {
+      if (!reg.bbox || reg.bbox.length < 4 || !imgW || !imgH) return {};
+      const [x1, y1, x2, y2] = reg.bbox;
+      return {
+        left: (x1 / imgW * 100) + '%',
+        top: (y1 / imgH * 100) + '%',
+        width: ((x2 - x1) / imgW * 100) + '%',
+        height: ((y2 - y1) / imgH * 100) + '%'
+      };
+    }
+    function isSegmentBboxSelected(qIdx, rIdx, pageIdx) {
+      const s = segmentEditorSelectedBbox.value;
+      return s && s.pageIdx === pageIdx && s.qIdx === qIdx && s.rIdx === rIdx;
+    }
+    function selectSegmentBbox(qIdx, rIdx, pageIdx) {
+      segmentEditorSelectedBbox.value = { pageIdx, qIdx, rIdx };
+    }
+    function startDrag(ev, pageIdx, qIdx, rIdx) {
+      if (segmentEditorResize.value) return;
+      const data = segmentEditorData.value;
+      if (!data || !data.questions || !data.questions[qIdx] || !data.questions[qIdx].regions[rIdx]) return;
+      const reg = data.questions[qIdx].regions[rIdx];
+      if (reg.page !== pageIdx + 1) return;
+      const wrapper = ev.currentTarget.closest('[data-page-idx]');
+      if (!wrapper) return;
+      const rect = wrapper.getBoundingClientRect();
+      const scaleX = (data.pages[pageIdx].width || 1) / rect.width;
+      const scaleY = (data.pages[pageIdx].height || 1) / rect.height;
+      segmentEditorDrag.value = {
+        pageIdx, qIdx, rIdx,
+        startX: ev.clientX - rect.left,
+        startY: ev.clientY - rect.top,
+        origBbox: [...reg.bbox],
+        scaleX, scaleY
+      };
+    }
+    function startResize(ev, pageIdx, qIdx, rIdx, corner) {
+      const data = segmentEditorData.value;
+      if (!data || !data.questions || !data.questions[qIdx] || !data.questions[qIdx].regions[rIdx]) return;
+      const reg = data.questions[qIdx].regions[rIdx];
+      if (reg.page !== pageIdx + 1) return;
+      const wrapper = ev.currentTarget.closest('[data-page-idx]');
+      if (!wrapper) return;
+      const rect = wrapper.getBoundingClientRect();
+      const scaleX = (data.pages[pageIdx].width || 1) / rect.width;
+      const scaleY = (data.pages[pageIdx].height || 1) / rect.height;
+      segmentEditorResize.value = {
+        pageIdx, qIdx, rIdx, corner,
+        origBbox: [...reg.bbox],
+        scaleX, scaleY
+      };
+    }
+    function onSegmentPageMouseDown(ev, pageIdx) {
+      if (ev.button !== 0) return;
+      if (segmentEditorDrag.value) return;
+      if (segmentEditorAddMode.value && segmentEditorNewBboxQid.value) {
+        const wrapper = ev.currentTarget;
+        const rect = wrapper.getBoundingClientRect();
+        const data = segmentEditorData.value;
+        const scaleX = (data.pages[pageIdx].width || 1) / rect.width;
+        const scaleY = (data.pages[pageIdx].height || 1) / rect.height;
+        const imgX = (ev.clientX - rect.left) * scaleX;
+        const imgY = (ev.clientY - rect.top) * scaleY;
+        segmentEditorDrawStart.value = { pageIdx, x: imgX, y: imgY };
+        segmentEditorDrawRect.value = { ...segmentEditorDrawRect.value, [pageIdx]: [imgX, imgY, imgX, imgY] };
+      }
+    }
+    function onSegmentPageMouseMove(ev, pageIdx) {
+      const data = segmentEditorData.value;
+      if (!data) return;
+      const wrapper = ev.currentTarget;
+      const rect = wrapper.getBoundingClientRect();
+      const scaleX = (data.pages[pageIdx].width || 1) / rect.width;
+      const scaleY = (data.pages[pageIdx].height || 1) / rect.height;
+      const x = (ev.clientX - rect.left) * scaleX;
+      const y = (ev.clientY - rect.top) * scaleY;
+      if (segmentEditorDrag.value && segmentEditorDrag.value.pageIdx === pageIdx) {
+        const d = segmentEditorDrag.value;
+        const curDx = ev.clientX - rect.left;
+        const curDy = ev.clientY - rect.top;
+        const deltaDisplayX = curDx - d.startX;
+        const deltaDisplayY = curDy - d.startY;
+        const deltaImageX = deltaDisplayX * d.scaleX;
+        const deltaImageY = deltaDisplayY * d.scaleY;
+        d.startX = curDx;
+        d.startY = curDy;
+        d.origBbox = [
+          d.origBbox[0] + deltaImageX, d.origBbox[1] + deltaImageY,
+          d.origBbox[2] + deltaImageX, d.origBbox[3] + deltaImageY
+        ];
+        const reg = data.questions[d.qIdx].regions[d.rIdx];
+        const pageW = data.pages[pageIdx].width || 0;
+        const pageH = data.pages[pageIdx].height || 0;
+        reg.bbox = clampBboxToPage(d.origBbox, pageW, pageH);
+      } else if (segmentEditorResize.value && segmentEditorResize.value.pageIdx === pageIdx) {
+        const r = segmentEditorResize.value;
+        const [ox1, oy1, ox2, oy2] = r.origBbox;
+        let x1 = ox1, y1 = oy1, x2 = ox2, y2 = oy2;
+        switch (r.corner) {
+          case 'nw': x1 = x; y1 = y; break;
+          case 'ne': x2 = x; y1 = y; break;
+          case 'sw': x1 = x; y2 = y; break;
+          case 'se': x2 = x; y2 = y; break;
+        }
+        const MIN = 20;
+        let left = Math.min(x1, x2);
+        let right = Math.max(x1, x2);
+        let top = Math.min(y1, y2);
+        let bottom = Math.max(y1, y2);
+        if (right - left < MIN) { const c = (left + right) / 2; left = c - MIN/2; right = c + MIN/2; }
+        if (bottom - top < MIN) { const c = (top + bottom) / 2; top = c - MIN/2; bottom = c + MIN/2; }
+        const reg = data.questions[r.qIdx].regions[r.rIdx];
+        const pageW = data.pages[pageIdx].width || 0;
+        const pageH = data.pages[pageIdx].height || 0;
+        reg.bbox = clampBboxToPage([left, top, right, bottom], pageW, pageH);
+      } else if (segmentEditorDrawStart.value && segmentEditorDrawStart.value.pageIdx === pageIdx) {
+        const start = segmentEditorDrawStart.value;
+        const x1 = Math.min(start.x, x);
+        const y1 = Math.min(start.y, y);
+        const x2 = Math.max(start.x, x);
+        const y2 = Math.max(start.y, y);
+        segmentEditorDrawRect.value = { ...segmentEditorDrawRect.value, [pageIdx]: [x1, y1, x2, y2] };
+      }
+    }
+    function onSegmentPageMouseUp(ev, pageIdx) {
+      if (segmentEditorDrag.value && segmentEditorDrag.value.pageIdx === pageIdx) {
+        segmentEditorDrag.value = null;
+      }
+      if (segmentEditorResize.value && segmentEditorResize.value.pageIdx === pageIdx) {
+        segmentEditorResize.value = null;
+      }
+      if (segmentEditorDrawStart.value && segmentEditorDrawStart.value.pageIdx === pageIdx) {
+        const draw = segmentEditorDrawRect.value[pageIdx];
+        if (draw && (draw[2] - draw[0] > 5 && draw[3] - draw[1] > 5)) {
+          const qid = segmentEditorNewBboxQid.value;
+          if (qid) {
+            const pageW = segmentEditorData.value.pages[pageIdx].width || 0;
+            const pageH = segmentEditorData.value.pages[pageIdx].height || 0;
+            const clamped = clampBboxToPage(draw, pageW, pageH);
+            let questions = segmentEditorData.value.questions;
+            let qEntry = questions.find(q => q.qid === qid);
+            if (!qEntry) {
+              qEntry = { qid, regions: [] };
+              questions.push(qEntry);
+            }
+            qEntry.regions = qEntry.regions || [];
+            qEntry.regions.push({ page: pageIdx + 1, bbox: clamped });
+          }
+        }
+        segmentEditorDrawStart.value = null;
+        const next = { ...segmentEditorDrawRect.value };
+        delete next[pageIdx];
+        segmentEditorDrawRect.value = next;
+      }
+    }
+    function deleteSegmentEditorBbox() {
+      const s = segmentEditorSelectedBbox.value;
+      if (!s || !segmentEditorData.value || !segmentEditorData.value.questions[s.qIdx]) return;
+      const regions = segmentEditorData.value.questions[s.qIdx].regions;
+      regions.splice(s.rIdx, 1);
+      segmentEditorSelectedBbox.value = null;
+    }
+    async function saveSegmentEditor() {
+      const data = segmentEditorData.value;
+      if (!data || data.error || !segmentEditorSelected.value) return;
+      segmentEditorSaving.value = true;
+      try {
+        const res = await api(`/api/pipeline/segment-editor/assignment/${encodeURIComponent(segmentEditorSelected.value)}/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dimensions: data.dimensions || [],
+            questions: data.questions || []
+          })
+        });
+        if (res.error) segmentEditorLoadError.value = res.error;
+        else { segmentEditorLoadError.value = ''; await loadStatus(); }
+      } catch (e) {
+        segmentEditorLoadError.value = e.message || '保存失败';
+      } finally {
+        segmentEditorSaving.value = false;
+      }
+    }
+    function segmentDrawPreviewStyle(pageIdx) {
+      const r = segmentEditorDrawRect.value[pageIdx];
+      const data = segmentEditorData.value;
+      if (!r || !data || !data.pages[pageIdx]) return {};
+      const w = data.pages[pageIdx].width || 1;
+      const h = data.pages[pageIdx].height || 1;
+      return {
+        left: (r[0] / w * 100) + '%',
+        top: (r[1] / h * 100) + '%',
+        width: ((r[2] - r[0]) / w * 100) + '%',
+        height: ((r[3] - r[1]) / h * 100) + '%'
+      };
+    }
+    function setSegmentImgRef(el, pageIdx) {}
+
     watch(page, async p => {
-      if (p === 'review') await loadReviewItems();
+      if (p === 'review') {
+        await loadQuestions();
+        await loadReviewItems();
+      }
       if (p === 'results') {
         await loadStudentList();
         await loadQuestions();
@@ -808,6 +1229,7 @@ createApp({
       }
       if (p === 'report') await loadReports();
       if (p === 'config') await loadQuestions();
+      if (p === 'segment') await loadSegmentEditorAssignments();
     });
 
     onMounted(async () => {
@@ -835,6 +1257,7 @@ createApp({
       reviewItems,
       studentList,
       selectedStudent,
+      studentResultLoading,
       currentResult,
       roster,
       rosterHeaders,
@@ -849,13 +1272,39 @@ createApp({
       cancelPipeline,
       loadStudentResult,
       submitReview,
+      confidenceOptions,
       triggerFileInput,
       setFileInputRef,
       onPaste,
       confidenceBadge,
       getQuestionByQid,
       renderMd,
-      maxDistCount
+      maxDistCount,
+      segmentEditorAssignments,
+      segmentEditorSelected,
+      segmentEditorData,
+      segmentEditorLoadError,
+      segmentEditorLoading,
+      segmentEditorSaving,
+      segmentEditorAddMode,
+      segmentEditorNewBboxQid,
+      segmentEditorSelectedBbox,
+      segmentEditorDrawRect,
+      loadSegmentEditorAssignments,
+      loadSegmentEditorAssignment,
+      segmentPageWrapperStyle,
+      segmentBboxStyle,
+      isSegmentBboxSelected,
+      selectSegmentBbox,
+      startDrag,
+      startResize,
+      onSegmentPageMouseDown,
+      onSegmentPageMouseMove,
+      onSegmentPageMouseUp,
+      deleteSegmentEditorBbox,
+      saveSegmentEditor,
+      segmentDrawPreviewStyle,
+      setSegmentImgRef
     };
   }
 }).mount('#app');

@@ -58,7 +58,7 @@ def update_review(filename_stem: str, qid: str, body: ReviewUpdate) -> dict:
             r.confidence = body.confidence
             r.summary = body.summary
             r.comments = body.comments
-            r.grader = "人工复核"
+            r.grader = "human"
             updated = True
             break
 

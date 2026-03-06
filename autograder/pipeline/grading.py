@@ -124,9 +124,14 @@ def load_student_result(filename_stem: str) -> StudentResult | None:
 
 
 def load_all_results() -> list[StudentResult]:
+    """加载 results 目录下所有学生评阅结果（持久化 JSON），不论是否有人工复核。
+    仅加载学生结果文件，跳过 question_reports.json 等非学生结果文件。
+    """
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     results = []
     for p in sorted(RESULTS_DIR.glob("*.json")):
+        if p.name == "question_reports.json":
+            continue
         try:
             results.append(StudentResult.model_validate_json(p.read_text(encoding="utf-8")))
         except Exception:

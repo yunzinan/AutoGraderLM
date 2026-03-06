@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Any, TypedDict
@@ -20,11 +21,6 @@ logger = logging.getLogger(__name__)
 # 发送给 LLM 的页面图最大宽度。API 端可能再次缩放，故我们主动缩放到已知尺寸，
 # 并在 prompt 中声明，使模型返回的 bbox 与我们的尺寸一致，再按比例还原到原图裁剪。
 SEGMENTATION_MAX_WIDTH = 1024
-# 还原到原图后，上下方向再外扩的像素数（原图坐标系）。结尾容易裁短，故底部留白加大
-SEGMENTATION_VERTICAL_PADDING_TOP = 40
-SEGMENTATION_VERTICAL_PADDING_BOTTOM = 90
-
-
 class SegState(TypedDict):
     pdf_path: str
     page_image_paths: list[str]
@@ -193,6 +189,21 @@ def _process_one_pdf_sync(
         return (stem, None)
 
     seg_result = SegmentationResult(**final["result"])
+    # 持久化 for_llm 坐标系下的 segment，供人工重新切分界面加载与保存
+    cache_dir = Path("./answers") / stem / "_pages"
+    segments_path = cache_dir / "segments.json"
+    segments_data = {
+        "dimensions": page_dims,
+        "questions": [
+            {"qid": qr.qid, "regions": [{"page": r.page, "bbox": r.bbox} for r in qr.regions]}
+            for qr in seg_result.questions
+        ],
+    }
+    try:
+        segments_path.write_text(json.dumps(segments_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Failed to write %s: %s", segments_path, e)
+
     full_res_pages = render_pdf_pages(pdf_path)
     answer_map: dict[str, list[str]] = {}
 
@@ -204,18 +215,20 @@ def _process_one_pdf_sync(
                 continue
             if page_1based > len(page_dims):
                 continue
-            # 将 LLM 返回的 bbox（基于缩放图坐标）还原为原图坐标
+            # 将 LLM 返回的 bbox（基于缩放图坐标）还原为原图坐标，不额外外扩
             resized_w, resized_h = page_dims[page_1based - 1]
             full_img = full_res_pages[page_1based - 1]
             full_w, full_h = full_img.size
             x1, y1, x2, y2 = region.bbox
+            scale_x = full_w / resized_w
             scale_y = full_h / resized_h
-            # 单栏文档：左右用满页宽；上下采用模型给出的范围后外扩，底部多留避免结尾裁短
-            y1_full = int(round(y1 * scale_y)) - SEGMENTATION_VERTICAL_PADDING_TOP
-            y2_full = int(round(y2 * scale_y)) + SEGMENTATION_VERTICAL_PADDING_BOTTOM
-            y1_full = max(0, min(y1_full, full_h))
-            y2_full = max(y1_full, min(y2_full, full_h))
-            bbox_full = [0, y1_full, full_w, y2_full]
+            x1_full = max(0, min(int(round(x1 * scale_x)), full_w))
+            y1_full = max(0, min(int(round(y1 * scale_y)), full_h))
+            x2_full = max(0, min(int(round(x2 * scale_x)), full_w))
+            y2_full = max(0, min(int(round(y2 * scale_y)), full_h))
+            if x2_full <= x1_full or y2_full <= y1_full:
+                continue
+            bbox_full = [x1_full, y1_full, x2_full, y2_full]
             flat_regions.append({"qid": qr.qid, "page": page_1based, "bbox": bbox_full})
         if flat_regions:
             paths = save_answer_images(pdf_path, full_res_pages, flat_regions)
@@ -265,3 +278,88 @@ async def run_segmentation(
             all_results[stem_result] = answer_map
 
     return all_results
+
+
+def load_segments_for_stem(stem: str) -> dict | None:
+    """加载某份作业的 segments.json（for_llm 坐标系）。不存在则返回 None。"""
+    segments_path = Path("./answers") / stem / "_pages" / "segments.json"
+    if not segments_path.exists():
+        return None
+    try:
+        return json.loads(segments_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("Failed to load %s: %s", segments_path, e)
+        return None
+
+
+def save_segments_for_stem(stem: str, dimensions: list[list[int]], questions: list[dict]) -> None:
+    """将 segments 写入 answers/{stem}/_pages/segments.json（for_llm 坐标系）。"""
+    cache_dir = Path("./answers") / stem / "_pages"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    segments_data = {
+        "dimensions": dimensions,
+        "questions": [
+            {"qid": q["qid"], "regions": [{"page": r["page"], "bbox": r["bbox"]} for r in q.get("regions", [])]}
+            for q in questions
+        ],
+    }
+    (cache_dir / "segments.json").write_text(
+        json.dumps(segments_data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def apply_manual_segments(
+    pdf_path: str,
+    dimensions_for_llm: list[tuple[int, int]],
+    questions: list[dict],
+) -> dict[str, list[str]]:
+    """根据 for_llm 坐标系下的 segments 重新生成答案图并保存。
+
+    questions: [{"qid": str, "regions": [{"page": int, "bbox": [x1,y1,x2,y2]}]}]
+    同一题的多个 region 按 (page, y1) 排序后依次作为该题的作答部分。
+    """
+    stem = Path(pdf_path).stem
+    full_res_pages = render_pdf_pages(pdf_path)
+    answer_map: dict[str, list[str]] = {}
+
+    for q in questions:
+        qid = q.get("qid", "")
+        regions = list(q.get("regions", []))
+        if not regions:
+            continue
+        # 按 page 优先、再按 bbox 左上角 y 排序（PDF 中靠前的在前）
+        regions = sorted(regions, key=lambda r: (r["page"], r["bbox"][1] if len(r["bbox"]) >= 2 else 0))
+        flat_regions = []
+        for r in regions:
+            page_1based = r["page"]
+            if page_1based < 1 or page_1based > len(full_res_pages):
+                continue
+            if page_1based > len(dimensions_for_llm):
+                continue
+            resized_w, resized_h = dimensions_for_llm[page_1based - 1]
+            full_img = full_res_pages[page_1based - 1]
+            full_w, full_h = full_img.size
+            x1, y1, x2, y2 = r["bbox"]
+            scale_x = full_w / resized_w
+            scale_y = full_h / resized_h
+            x1_full = int(round(x1 * scale_x))
+            y1_full = int(round(y1 * scale_y))
+            x2_full = int(round(x2 * scale_x))
+            y2_full = int(round(y2 * scale_y))
+            bbox_full = [
+                max(0, min(x1_full, full_w)),
+                max(0, min(y1_full, full_h)),
+                max(0, min(x2_full, full_w)),
+                max(0, min(y2_full, full_h)),
+            ]
+            if bbox_full[2] <= bbox_full[0] or bbox_full[3] <= bbox_full[1]:
+                continue
+            flat_regions.append({"qid": qid, "page": page_1based, "bbox": bbox_full})
+        if flat_regions:
+            paths = save_answer_images(pdf_path, full_res_pages, flat_regions)
+            answer_map[qid] = paths
+
+    # 持久化 segments（for_llm 坐标）供下次编辑
+    dims_list = [list(d) for d in dimensions_for_llm]
+    save_segments_for_stem(stem, dims_list, questions)
+    return answer_map
