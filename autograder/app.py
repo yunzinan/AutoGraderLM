@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from autograder.config import get_config
+from autograder.config import get_config, get_assignment_path
 
 
 def create_app() -> FastAPI:
@@ -42,10 +42,15 @@ def create_app() -> FastAPI:
         cfg = get_config()
         return cfg.model_dump()
 
-    for dir_name in ("questions", "answers", "results", "res"):
-        d = Path(dir_name)
+    base = get_assignment_path()
+    for dir_name in ("questions", "answers", "results"):
+        d = base / dir_name
         d.mkdir(parents=True, exist_ok=True)
         app.mount(f"/files/{dir_name}", StaticFiles(directory=str(d)), name=f"files_{dir_name}")
+    # res 使用配置中的 pdf_folder_path（已解析到 assignment_path 下）
+    res_dir = Path(get_config().assignment_configuration.pdf_folder_path)
+    res_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/files/res", StaticFiles(directory=str(res_dir)), name="files_res")
 
     static_dir = Path("static")
     if static_dir.exists():

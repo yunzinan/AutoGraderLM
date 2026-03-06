@@ -39,8 +39,8 @@ def export_scores(cfg: AppConfig, results: list[StudentResult]) -> str:
         comment = build_student_comment(sr.records)
         score_map[sr.student_id] = (sr.total_score, comment)
 
-    in_path = cfg.assignment_configuration.xlsx_in_path
-    out_path = cfg.assignment_report.xlsx_out_path
+    in_path = cfg.assignment_configuration.excel_in_path
+    out_path = cfg.assignment_report.excel_out_path
     export_graded_xlsx(in_path, score_map, out_path)
     logger.info("Exported graded xlsx to %s", out_path)
     return out_path

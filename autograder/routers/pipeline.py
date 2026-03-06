@@ -12,9 +12,9 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body
 
-from autograder.config import get_config
+from autograder.config import get_config, get_answers_dir, get_results_dir, resolve_assignment_path
 from autograder.models import PipelineStatus, QuestionReport
-from autograder.pipeline.grading import RESULTS_DIR, load_all_results, run_grading
+from autograder.pipeline.grading import load_all_results, run_grading
 from autograder.pipeline.report import generate_all_reports, run_report_sync
 from autograder.pipeline.segmentation import (
     apply_manual_segments,
@@ -26,7 +26,33 @@ from autograder.routers.questions import load_all_questions
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
-REPORTS_JSON_PATH = RESULTS_DIR / "question_reports.json"
+def _reports_json_path() -> Path:
+    return get_results_dir() / "question_reports.json"
+
+
+def _build_answer_map_from_disk() -> dict[str, dict[str, list[str]]]:
+    """从 answers 目录恢复 answer_map（服务重启后或未先点「开始切分」时可用）。"""
+    result: dict[str, dict[str, list[str]]] = {}
+    answers_dir = get_answers_dir()
+    if not answers_dir.exists():
+        return result
+    for stem_dir in sorted(answers_dir.iterdir()):
+        if not stem_dir.is_dir() or stem_dir.name.startswith("_"):
+            continue
+        stem = stem_dir.name
+        by_qid: dict[str, list[str]] = {}
+        for f in sorted(stem_dir.glob("*.png")):
+            if not f.is_file():
+                continue
+            # 文件名格式 Q1-0.png, Q2-1.png -> qid 为 Q1, Q2
+            parts = f.stem.split("-", 1)
+            qid = parts[0] if parts else f.stem
+            path_str = str(resolve_assignment_path(f"answers/{stem}/{f.name}"))
+            by_qid.setdefault(qid, []).append(path_str)
+        if by_qid:
+            result[stem] = by_qid
+    return result
+
 
 _status = PipelineStatus()
 _status_lock = threading.Lock()
@@ -38,10 +64,11 @@ _report_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="report"
 
 def _load_reports_from_disk() -> list[QuestionReport]:
     """Load question reports from disk so they persist across restarts."""
-    if not REPORTS_JSON_PATH.exists():
+    path = _reports_json_path()
+    if not path.exists():
         return []
     try:
-        raw = json.loads(REPORTS_JSON_PATH.read_text(encoding="utf-8"))
+        raw = json.loads(path.read_text(encoding="utf-8"))
         out: list[QuestionReport] = []
         for d in raw:
             dist = d.get("score_distribution") or {}
@@ -50,20 +77,21 @@ def _load_reports_from_disk() -> list[QuestionReport]:
             out.append(QuestionReport.model_validate(d))
         return out
     except Exception as e:
-        logger.warning("Failed to load persisted reports from %s: %s", REPORTS_JSON_PATH, e)
+        logger.warning("Failed to load persisted reports from %s: %s", path, e)
         return []
 
 
 def _save_reports_to_disk(reports: list[QuestionReport]) -> None:
     """Persist question reports to disk."""
     try:
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        REPORTS_JSON_PATH.write_text(
+        results_dir = get_results_dir()
+        results_dir.mkdir(parents=True, exist_ok=True)
+        _reports_json_path().write_text(
             json.dumps([r.model_dump() for r in reports], ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     except Exception as e:
-        logger.warning("Failed to save reports to %s: %s", REPORTS_JSON_PATH, e)
+        logger.warning("Failed to save reports to %s: %s", _reports_json_path(), e)
 
 
 def _update_status_sync(msg: str, current: int, total: int) -> None:
@@ -135,12 +163,14 @@ async def start_segmentation() -> dict:
 
 @router.post("/grade")
 async def start_grading() -> dict:
-    global _running_task
+    global _running_task, _answer_map
     if _status.stage not in ("idle", "done", "error"):
         return {"error": f"Pipeline already running: {_status.stage}"}
 
     if not _answer_map:
-        return {"error": "请先运行作业切分"}
+        _answer_map = _build_answer_map_from_disk()
+    if not _answer_map:
+        return {"error": "请先运行作业切分，或确认 answers 目录下已有切分结果"}
 
     _status.stage = "grading"
     _status.errors = []
@@ -225,7 +255,7 @@ def get_answer_map() -> dict:
 
 def _list_segment_assignments() -> list[dict]:
     """列出已有 _pages/for_llm 的作业（stem + 显示名）。"""
-    answers_dir = Path("./answers")
+    answers_dir = get_answers_dir()
     if not answers_dir.exists():
         return []
     out = []
@@ -252,7 +282,7 @@ def segment_editor_list_assignments() -> list:
 def _resolve_stem_for_answers(stem: str) -> str | None:
     """解析 stem 对应的 answers 下实际目录名（处理 Unicode 规范化差异）。"""
     import unicodedata
-    answers_dir = Path("./answers")
+    answers_dir = get_answers_dir()
     if not answers_dir.exists():
         return None
     stem_nfc = unicodedata.normalize("NFC", stem)
@@ -270,7 +300,7 @@ def segment_editor_get_assignment(stem: str) -> dict:
     actual_stem = _resolve_stem_for_answers(stem)
     if actual_stem is None:
         return {"error": "未找到该作业的 for_llm 页面"}
-    base = Path("./answers") / actual_stem / "_pages" / "for_llm"
+    base = get_answers_dir() / actual_stem / "_pages" / "for_llm"
     if not base.exists() or not base.is_dir():
         return {"error": "未找到该作业的 for_llm 页面"}
     page_files = sorted(base.glob("page_*.png"))

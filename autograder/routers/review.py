@@ -7,8 +7,9 @@ from pathlib import Path
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from autograder.config import get_results_dir, to_relative_url_path
 from autograder.models import GradingRecord, StudentResult
-from autograder.pipeline.grading import RESULTS_DIR, load_all_results
+from autograder.pipeline.grading import load_all_results
 
 router = APIRouter(prefix="/api/review", tags=["review"])
 
@@ -26,7 +27,7 @@ def get_review_items() -> list[dict]:
                     "student_id": sr.student_id,
                     "student_name": sr.student_name,
                     "qid": r.qid,
-                    "answer": r.answer,
+                    "answer": [to_relative_url_path(p) for p in (r.answer or [])],
                     "grader": r.grader,
                     "score": r.score,
                     "confidence": r.confidence,
@@ -46,7 +47,7 @@ class ReviewUpdate(BaseModel):
 @router.put("/{filename_stem}/{qid}")
 def update_review(filename_stem: str, qid: str, body: ReviewUpdate) -> dict:
     """Teacher manually updates a grading record."""
-    path = RESULTS_DIR / f"{filename_stem}.json"
+    path = get_results_dir() / f"{filename_stem}.json"
     if not path.exists():
         return {"error": "结果文件不存在"}
 

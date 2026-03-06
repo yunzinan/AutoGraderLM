@@ -10,23 +10,35 @@ from typing import Any, Optional
 from fastapi import APIRouter, File, UploadFile
 from pydantic import BaseModel
 
+from autograder.config import get_questions_dir
 from autograder.models import QuestionConfig
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
-QUESTIONS_DIR = Path("./questions")
 
 
 def _q_dir(qid: str) -> Path:
-    d = QUESTIONS_DIR / qid
+    d = get_questions_dir() / qid
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _normalize_image_path(path: str, qid: str) -> str:
+    """将绝对路径规范为相对路径 questions/{qid}/{filename}，供前端 /files/ + path 使用。"""
+    p = Path(path)
+    if not p.is_absolute():
+        return path
+    return f"questions/{qid}/{p.name}"
 
 
 def _load_config(qid: str) -> QuestionConfig | None:
     cfg_path = _q_dir(qid) / "config.json"
     if not cfg_path.exists():
         return None
-    return QuestionConfig.model_validate_json(cfg_path.read_text(encoding="utf-8"))
+    q = QuestionConfig.model_validate_json(cfg_path.read_text(encoding="utf-8"))
+    # 兼容旧配置：绝对路径转为相对路径，保证前端 /files/ + path 正确
+    q.question_images = [_normalize_image_path(p, qid) for p in (q.question_images or [])]
+    q.example_answer_images = [_normalize_image_path(p, qid) for p in (q.example_answer_images or [])]
+    return q
 
 
 def _save_config(q: QuestionConfig) -> None:
@@ -35,9 +47,10 @@ def _save_config(q: QuestionConfig) -> None:
 
 
 def load_all_questions() -> list[QuestionConfig]:
-    QUESTIONS_DIR.mkdir(parents=True, exist_ok=True)
+    qdir = get_questions_dir()
+    qdir.mkdir(parents=True, exist_ok=True)
     qs: list[QuestionConfig] = []
-    for d in sorted(QUESTIONS_DIR.iterdir()):
+    for d in sorted(qdir.iterdir()):
         if d.is_dir():
             q = _load_config(d.name)
             if q:
@@ -85,7 +98,7 @@ def upsert_question(qid: str, body: QuestionUpdate) -> QuestionConfig:
 
 @router.delete("/{qid}")
 def delete_question(qid: str) -> dict:
-    d = QUESTIONS_DIR / qid
+    d = get_questions_dir() / qid
     if d.exists():
         shutil.rmtree(d)
     return {"ok": True}
@@ -98,11 +111,12 @@ async def upload_question_image(qid: str, file: UploadFile = File(...)) -> dict:
     idx = len(existing)
     dest = d / f"question_{idx}.png"
     dest.write_bytes(await file.read())
-
+    # 存相对路径，前端用 /files/ + path 访问
+    rel_path = f"questions/{qid}/{dest.name}"
     q = _load_config(qid) or QuestionConfig(qid=qid, score=0)
-    q.question_images.append(str(dest))
+    q.question_images.append(rel_path)
     _save_config(q)
-    return {"path": str(dest)}
+    return {"path": rel_path}
 
 
 @router.post("/{qid}/upload_example_image")
@@ -112,8 +126,8 @@ async def upload_example_image(qid: str, file: UploadFile = File(...)) -> dict:
     idx = len(existing)
     dest = d / f"example_{idx}.png"
     dest.write_bytes(await file.read())
-
+    rel_path = f"questions/{qid}/{dest.name}"
     q = _load_config(qid) or QuestionConfig(qid=qid, score=0)
-    q.example_answer_images.append(str(dest))
+    q.example_answer_images.append(rel_path)
     _save_config(q)
-    return {"path": str(dest)}
+    return {"path": rel_path}

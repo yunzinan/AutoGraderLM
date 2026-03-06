@@ -173,6 +173,17 @@
 </head>
 <body class="min-h-screen">
 <div id="app" v-cloak class="px-5 py-6 lg:px-8 lg:py-8" :class="{ 'pt-14': isReportBusy }">
+  <!-- 操作成功/失败 Toast -->
+  <div v-if="toast.show" class="fixed bottom-6 right-6 z-[60] px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium transition-opacity duration-200" :class="toast.type === 'error' ? 'bg-red-500' : 'bg-emerald-500'">
+    {{ toast.text }}
+  </div>
+  <!-- 图片全屏查看 -->
+  <div v-if="fullscreenImageUrl" class="fixed inset-0 z-[70] flex items-center justify-center bg-black/80 p-4" @click.self="closeImageFullscreen">
+    <button type="button" class="absolute top-4 right-4 z-10 rounded-full bg-white/90 p-2 text-slate-700 shadow-lg hover:bg-white" @click="closeImageFullscreen" title="关闭">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+    </button>
+    <img :src="fullscreenImageUrl" class="max-w-[95vw] max-h-[95vh] object-contain rounded-lg shadow-2xl" @click.stop />
+  </div>
   <!-- 生成报告中全局提示条：不阻塞其他操作，始终可见 -->
   <div v-if="isReportBusy" class="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 bg-brand-600 px-4 py-3 text-white shadow-lg">
     <svg class="h-5 w-5 flex-shrink-0 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -282,12 +293,12 @@
               <div class="card">
                 <p class="mb-3 text-sm font-semibold text-slate-700">题干图片</p>
                 <div class="mb-3 flex flex-wrap gap-2">
-                  <img
-                    v-for="(img, idx) in q.question_images"
-                    :key="idx"
-                    :src="'/files/' + img"
-                    class="h-24 rounded-lg border border-slate-200 bg-white object-contain p-1"
-                  />
+                  <div v-for="(img, idx) in q.question_images" :key="idx" class="relative inline-block group">
+                    <img :src="'/files/' + img" class="h-24 rounded-lg border border-slate-200 bg-white object-contain p-1" />
+                    <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                    </button>
+                  </div>
                 </div>
                 <div
                   class="paste-zone"
@@ -311,12 +322,12 @@
               <div class="card">
                 <p class="mb-3 text-sm font-semibold text-slate-700">参考答案图片</p>
                 <div class="mb-3 flex flex-wrap gap-2">
-                  <img
-                    v-for="(img, idx) in q.example_answer_images"
-                    :key="idx"
-                    :src="'/files/' + img"
-                    class="h-24 rounded-lg border border-slate-200 bg-white object-contain p-1"
-                  />
+                  <div v-for="(img, idx) in q.example_answer_images" :key="idx" class="relative inline-block group">
+                    <img :src="'/files/' + img" class="h-24 rounded-lg border border-slate-200 bg-white object-contain p-1" />
+                    <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                    </button>
+                  </div>
                 </div>
                 <div
                   class="paste-zone"
@@ -412,7 +423,7 @@
               >
                 <div class="text-sm font-medium text-slate-600 mb-1">第 {{ pageIdx + 1 }} 页</div>
                 <div
-                  class="relative inline-block max-w-full segment-page-canvas"
+                  class="relative inline-block max-w-full segment-page-canvas group/seg"
                   :data-page-idx="pageIdx"
                   :style="segmentPageWrapperStyle(pg)"
                   @mousedown="onSegmentPageMouseDown($event, pageIdx)"
@@ -420,6 +431,9 @@
                   @mouseup="onSegmentPageMouseUp($event, pageIdx)"
                   @mouseleave="onSegmentPageMouseUp($event, pageIdx)"
                 >
+                  <button type="button" class="absolute top-1 right-1 z-20 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover/seg:opacity-100 transition-opacity pointer-events-auto" @click.stop="openImageFullscreen(pg.url)" title="放大">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                  </button>
                   <img
                     :ref="el => setSegmentImgRef(el, pageIdx)"
                     :src="pg.url"
@@ -516,16 +530,41 @@
               <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">题目信息</p>
               <p v-if="getQuestionByQid(item.qid).question_text" class="mb-2 text-sm text-slate-700">{{ getQuestionByQid(item.qid).question_text }}</p>
               <div class="mb-2 flex flex-wrap gap-2">
-                <img v-for="img in getQuestionByQid(item.qid).question_images" :key="img" :src="'/files/' + img" class="max-h-32 rounded-lg border border-slate-200 bg-white p-1" />
+                <div v-for="img in getQuestionByQid(item.qid).question_images" :key="img" class="relative inline-block group">
+                  <img :src="'/files/' + img" class="max-h-32 rounded-lg border border-slate-200 bg-white p-1" />
+                  <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                  </button>
+                </div>
               </div>
               <div v-if="getQuestionByQid(item.qid).rubric" class="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
                 <p class="mb-1 text-xs font-semibold text-slate-500">评分标准</p>
                 <p class="whitespace-pre-wrap">{{ getQuestionByQid(item.qid).rubric }}</p>
               </div>
+              <!-- 参考答案（若有） -->
+              <template v-if="getQuestionByQid(item.qid).example_answer_text || (getQuestionByQid(item.qid).example_answer_images && getQuestionByQid(item.qid).example_answer_images.length)">
+                <div class="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                  <p class="mb-1 text-xs font-semibold text-slate-500">参考答案</p>
+                  <p v-if="getQuestionByQid(item.qid).example_answer_text" class="mb-2 whitespace-pre-wrap">{{ getQuestionByQid(item.qid).example_answer_text }}</p>
+                  <div class="flex flex-wrap gap-2">
+                    <div v-for="img in (getQuestionByQid(item.qid).example_answer_images || [])" :key="img" class="relative inline-block group">
+                      <img :src="'/files/' + img" class="max-h-32 rounded-lg border border-slate-200 bg-white p-1" />
+                      <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </template>
             </div>
 
             <div class="mb-3 flex flex-wrap gap-2">
-              <img v-for="img in item.answer" :src="'/files/' + img" class="max-h-44 rounded-lg border border-slate-200 bg-white p-1" />
+              <div v-for="img in item.answer" :key="img" class="relative inline-block group">
+                <img :src="'/files/' + img" class="max-h-44 rounded-lg border border-slate-200 bg-white p-1" />
+                <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                </button>
+              </div>
             </div>
             <div class="mb-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><b>LLM 总结：</b>{{ item.summary }}</div>
             <div class="mb-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><b>LLM 评语：</b>{{ item.comments }}</div>
@@ -588,11 +627,21 @@
                 <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">题干</p>
                 <p v-if="getQuestionByQid(r.qid).question_text" class="mb-2 text-sm text-slate-700">{{ getQuestionByQid(r.qid).question_text }}</p>
                 <div class="flex flex-wrap gap-2">
-                  <img v-for="img in getQuestionByQid(r.qid).question_images" :src="'/files/' + img" class="max-h-32 rounded-lg border border-slate-200 bg-white p-1" />
+                  <div v-for="img in getQuestionByQid(r.qid).question_images" :key="img" class="relative inline-block group">
+                    <img :src="'/files/' + img" class="max-h-32 rounded-lg border border-slate-200 bg-white p-1" />
+                    <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                    </button>
+                  </div>
                 </div>
               </div>
               <div class="mb-3 flex flex-wrap gap-2">
-                <img v-for="img in r.answer" :src="'/files/' + img" class="max-h-48 rounded-lg border border-slate-200 bg-white p-1" />
+                <div v-for="img in r.answer" :key="img" class="relative inline-block group">
+                  <img :src="'/files/' + img" class="max-h-48 rounded-lg border border-slate-200 bg-white p-1" />
+                  <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                  </button>
+                </div>
               </div>
               <div class="mb-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><b>总结：</b>{{ r.summary }}</div>
               <div class="rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><b>评语：</b>{{ r.comments }}</div>
@@ -651,12 +700,27 @@
               <table class="w-full min-w-[720px] text-sm">
                 <thead>
                   <tr class="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-500">
-                    <th v-for="h in rosterHeaders" class="px-3 py-3 font-semibold">{{ h }}</th>
+                    <th v-for="h in rosterHeadersDisplay" :key="h" class="px-3 py-3 font-semibold"
+                      :class="{ 'cursor-pointer select-none hover:text-brand-600': ROSTER_SORTABLE_HEADERS.includes(h) }"
+                      @click="ROSTER_SORTABLE_HEADERS.includes(h) && setRosterSort(h)">
+                      <span class="inline-flex items-center gap-1">
+                        {{ h }}
+                        <template v-if="ROSTER_SORTABLE_HEADERS.includes(h) && rosterSortBy === h">
+                          <span v-if="rosterSortOrder === 'asc'">↑</span>
+                          <span v-else>↓</span>
+                        </template>
+                      </span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in roster" class="border-b border-slate-100 hover:bg-slate-50">
-                    <td v-for="h in rosterHeaders" class="px-3 py-3 text-slate-700">{{ row[h] ?? '' }}</td>
+                  <tr v-for="(row, idx) in rosterSorted" :key="idx" class="border-b border-slate-100 hover:bg-slate-50">
+                    <td v-for="h in rosterHeadersDisplay" :key="h" class="px-3 py-3 text-slate-700"
+                      :class="{ 'cursor-pointer text-brand-600 hover:underline': h === '学号' }"
+                      :title="h === '学号' ? '点击查看该同学评阅详情' : null"
+                      @click="h === '学号' && goToStudentResult(row)">
+                      {{ row[h] ?? '' }}
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -720,6 +784,13 @@ createApp({
     const currentResult = ref(null);
     const roster = ref([]);
     const rosterHeaders = ref([]);
+    // 表格中不展示的列（含则隐藏；导出仍包含）
+    function isRosterColumnHidden(header) {
+      const h = String(header || '').trim();
+      return h === '学生作业ID' || h === '作业ID' || h === '提交作业状态' || h.includes('作业ID') || h.includes('提交作业状态');
+    }
+    const rosterSortBy = ref(null);
+    const rosterSortOrder = ref('asc');
     const summary = ref({});
     const reports = ref([]);
     const fileInputRefs = {};
@@ -737,6 +808,22 @@ createApp({
     const segmentEditorResize = ref(null);
     const segmentEditorDrawStart = ref(null);
     const segmentEditorDrawRect = ref({});
+    const toast = reactive({ show: false, text: '', type: 'success' });
+    let toastTimer = null;
+    const fullscreenImageUrl = ref(null);
+    function openImageFullscreen(src) {
+      fullscreenImageUrl.value = src || null;
+    }
+    function closeImageFullscreen() {
+      fullscreenImageUrl.value = null;
+    }
+    function showToast(text, type = 'success') {
+      toast.show = true;
+      toast.text = text;
+      toast.type = type;
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => { toast.show = false; toastTimer = null; }, 2500);
+    }
 
     const progressPct = computed(() => {
       return status.total ? Math.round((status.current / status.total) * 100) : 0;
@@ -761,6 +848,49 @@ createApp({
       if (status.stage === 'idle') return 'text-slate-600';
       return 'text-brand-600';
     });
+
+    const rosterHeadersDisplay = computed(() => {
+      return (rosterHeaders.value || []).filter(h => !isRosterColumnHidden(h));
+    });
+    const ROSTER_SORTABLE_HEADERS = ['学号', '成绩（录入项）', '成绩'];
+    const rosterSorted = computed(() => {
+      const list = [...(roster.value || [])];
+      const by = rosterSortBy.value;
+      const order = rosterSortOrder.value;
+      if (!by || !list.length) return list;
+      list.sort((a, b) => {
+        let va = a[by];
+        let vb = b[by];
+        const isNum = typeof va === 'number' && typeof vb === 'number';
+        if (isNum) {
+          return order === 'asc' ? va - vb : vb - va;
+        }
+        va = String(va ?? '');
+        vb = String(vb ?? '');
+        const cmp = va.localeCompare(vb, 'zh-CN');
+        return order === 'asc' ? cmp : -cmp;
+      });
+      return list;
+    });
+
+    function setRosterSort(header) {
+      if (!ROSTER_SORTABLE_HEADERS.includes(header)) return;
+      if (rosterSortBy.value === header) {
+        rosterSortOrder.value = rosterSortOrder.value === 'asc' ? 'desc' : 'asc';
+      } else {
+        rosterSortBy.value = header;
+        rosterSortOrder.value = 'asc';
+      }
+    }
+    function goToStudentResult(row) {
+      const sid = String(row['学号'] ?? row['学生作业ID'] ?? '').trim();
+      if (!sid) return;
+      const s = (studentList.value || []).find(x => String(x.student_id).trim() === sid);
+      if (!s) return;
+      selectedStudent.value = s.filename_stem;
+      page.value = 'results';
+      loadStudentResult();
+    }
 
     const api = async (path, opts) => {
       const response = await fetch(path, opts);
@@ -805,7 +935,8 @@ createApp({
       fd.append('file', blob, `image.${ext}`);
       const endpoint = kind === 'question' ? 'upload_question_image' : 'upload_example_image';
       const res = await fetch(`/api/questions/${qid}/${endpoint}`, { method: 'POST', body: fd });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) { showToast('上传失败', 'error'); throw new Error(await res.text()); }
+      showToast('上传成功');
     }
 
     async function loadConfig() {
@@ -851,18 +982,20 @@ createApp({
     async function saveQuestion(q) {
       const idx = q.question_index;
       const questionIndex = (idx != null && idx !== '' && !Number.isNaN(Number(idx))) ? Number(idx) : null;
-      await api(`/api/questions/${q.qid}`, {
+      const res = await api(`/api/questions/${q.qid}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...q, question_index: questionIndex })
       });
-      await loadQuestions();
+      if (res.error) showToast(res.error || '保存失败', 'error');
+      else { showToast('保存成功'); await loadQuestions(); }
     }
 
     async function deleteQuestion(qid) {
       if (!confirm(`确认删除 ${qid}？`)) return;
-      await api(`/api/questions/${qid}`, { method: 'DELETE' });
-      await loadQuestions();
+      const res = await api(`/api/questions/${qid}`, { method: 'DELETE' });
+      if (res.error) showToast(res.error || '删除失败', 'error');
+      else { showToast('删除成功'); await loadQuestions(); }
     }
 
     async function uploadImage(qid, kind, event) {
@@ -872,29 +1005,43 @@ createApp({
       fd.append('file', file);
       const endpoint = kind === 'question' ? 'upload_question_image' : 'upload_example_image';
       const res = await fetch(`/api/questions/${qid}/${endpoint}`, { method: 'POST', body: fd });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) { showToast('上传失败', 'error'); return; }
+      showToast('上传成功');
       await loadQuestions();
       event.target.value = '';
     }
 
     let pollTimer = null;
-    async function runPipeline(action) {
+    function startStatusPolling() {
       if (pollTimer) clearInterval(pollTimer);
-      lastAction.value = action;
-      await api('/api/pipeline/reset', { method: 'POST' });
-      await api(`/api/pipeline/${action}`, { method: 'POST' });
-      await loadStatus();
       pollTimer = setInterval(async () => {
         await loadStatus();
         if (['done', 'error', 'idle'].includes(status.stage)) {
           clearInterval(pollTimer);
-          if (action === 'report') {
+          pollTimer = null;
+          if (status.stage === 'error' && status.errors && status.errors.length) {
+            showToast(status.errors[0] || '执行失败', 'error');
+          }
+          if (lastAction.value === 'report') {
             await loadReports();
             await loadRoster();
             await loadSummary();
           }
         }
       }, 1500);
+    }
+    async function runPipeline(action) {
+      if (pollTimer) clearInterval(pollTimer);
+      lastAction.value = action;
+      await api('/api/pipeline/reset', { method: 'POST' });
+      const res = await api(`/api/pipeline/${action}`, { method: 'POST' });
+      if (res && res.error) {
+        showToast(res.error, 'error');
+        await loadStatus();
+        return;
+      }
+      await loadStatus();
+      startStatusPolling();
     }
     async function cancelPipeline() {
       if (pollTimer) clearInterval(pollTimer);
@@ -920,7 +1067,7 @@ createApp({
 
     async function submitReview(item) {
       const stem = item.filename.replace(/\.pdf$/i, '');
-      await api(`/api/review/${stem}/${item.qid}`, {
+      const res = await api(`/api/review/${stem}/${item.qid}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -930,8 +1077,9 @@ createApp({
           comments: item.comments
         })
       });
+      if (res.error) { showToast(res.error || '提交失败', 'error'); return; }
+      showToast('提交成功');
       await loadReviewItems();
-      // 人工复核会更新持久化结果文件，刷新评阅结果与评分统计以保持一致
       await loadStudentList();
       if (selectedStudent.value === stem) await loadStudentResult();
       await loadRoster();
@@ -1191,10 +1339,11 @@ createApp({
             questions: data.questions || []
           })
         });
-        if (res.error) segmentEditorLoadError.value = res.error;
-        else { segmentEditorLoadError.value = ''; await loadStatus(); }
+        if (res.error) { segmentEditorLoadError.value = res.error; showToast(res.error || '保存失败', 'error'); }
+        else { segmentEditorLoadError.value = ''; showToast('保存成功'); await loadStatus(); }
       } catch (e) {
         segmentEditorLoadError.value = e.message || '保存失败';
+        showToast(e.message || '保存失败', 'error');
       } finally {
         segmentEditorSaving.value = false;
       }
@@ -1226,6 +1375,7 @@ createApp({
       if (p === 'stats') {
         await loadRoster();
         await loadSummary();
+        await loadStudentList();
       }
       if (p === 'report') await loadReports();
       if (p === 'config') await loadQuestions();
@@ -1237,6 +1387,13 @@ createApp({
       await loadQuestions();
       await loadStatus();
       await loadReviewItems();
+      // 若服务端 pipeline 仍在运行（如刷新页面后重进），则启动轮询以实时更新进度
+      if (['grading', 'segmentation', 'report'].includes(status.stage)) {
+        if (status.stage === 'grading') lastAction.value = 'grade';
+        else if (status.stage === 'segmentation') lastAction.value = 'segment';
+        else if (status.stage === 'report') lastAction.value = 'report';
+        startStatusPolling();
+      }
     });
 
     return {
@@ -1245,6 +1402,11 @@ createApp({
       currentNav,
       configData,
       questions,
+      toast,
+      showToast,
+      fullscreenImageUrl,
+      openImageFullscreen,
+      closeImageFullscreen,
       status,
       lastAction,
       progressPct,
@@ -1261,6 +1423,13 @@ createApp({
       currentResult,
       roster,
       rosterHeaders,
+      rosterHeadersDisplay,
+      rosterSorted,
+      rosterSortBy,
+      rosterSortOrder,
+      setRosterSort,
+      goToStudentResult,
+      ROSTER_SORTABLE_HEADERS,
       summary,
       reports,
       addQuestion,

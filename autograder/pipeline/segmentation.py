@@ -11,7 +11,7 @@ from typing import Any, TypedDict
 from jinja2 import Template
 from langgraph.graph import END, StateGraph
 
-from autograder.config import AppConfig
+from autograder.config import AppConfig, get_answers_dir, resolve_assignment_path
 from autograder.llm import build_llm, build_vision_message_segmented, extract_json, invoke_with_log
 from autograder.models import QuestionConfig, SegmentationResult
 from autograder.pdf_utils import render_pdf_pages, save_answer_images
@@ -56,7 +56,7 @@ def _render_and_cache_pages(pdf_path: str) -> tuple[list[str], list[tuple[int, i
 
     pages = render_pdf_pages(pdf_path)
     stem = Path(pdf_path).stem
-    cache_dir = Path("./answers") / stem / "_pages"
+    cache_dir = get_answers_dir() / stem / "_pages"
     cache_dir.mkdir(parents=True, exist_ok=True)
     # 原图保存到 _pages（便于人工查看）
     for i, img in enumerate(pages):
@@ -109,7 +109,10 @@ def build_segmentation_graph(cfg: AppConfig) -> StateGraph:
 
         for q in questions:
             q_text = _format_question_block(q)
-            q_images = [p for p in (q.get("question_images") or []) if p and Path(p).exists()]
+            q_images = [
+                str(resolve_assignment_path(p)) for p in (q.get("question_images") or [])
+                if p and resolve_assignment_path(p).exists()
+            ]
             segments.append((q_text, q_images))
 
         tail_text = tail_tpl.render()
@@ -190,7 +193,7 @@ def _process_one_pdf_sync(
 
     seg_result = SegmentationResult(**final["result"])
     # 持久化 for_llm 坐标系下的 segment，供人工重新切分界面加载与保存
-    cache_dir = Path("./answers") / stem / "_pages"
+    cache_dir = get_answers_dir() / stem / "_pages"
     segments_path = cache_dir / "segments.json"
     segments_data = {
         "dimensions": page_dims,
@@ -231,7 +234,7 @@ def _process_one_pdf_sync(
             bbox_full = [x1_full, y1_full, x2_full, y2_full]
             flat_regions.append({"qid": qr.qid, "page": page_1based, "bbox": bbox_full})
         if flat_regions:
-            paths = save_answer_images(pdf_path, full_res_pages, flat_regions)
+            paths = save_answer_images(pdf_path, full_res_pages, flat_regions, output_dir=get_answers_dir())
             answer_map[qr.qid] = paths
 
     return (stem, answer_map)
@@ -282,7 +285,7 @@ async def run_segmentation(
 
 def load_segments_for_stem(stem: str) -> dict | None:
     """加载某份作业的 segments.json（for_llm 坐标系）。不存在则返回 None。"""
-    segments_path = Path("./answers") / stem / "_pages" / "segments.json"
+    segments_path = get_answers_dir() / stem / "_pages" / "segments.json"
     if not segments_path.exists():
         return None
     try:
@@ -294,7 +297,7 @@ def load_segments_for_stem(stem: str) -> dict | None:
 
 def save_segments_for_stem(stem: str, dimensions: list[list[int]], questions: list[dict]) -> None:
     """将 segments 写入 answers/{stem}/_pages/segments.json（for_llm 坐标系）。"""
-    cache_dir = Path("./answers") / stem / "_pages"
+    cache_dir = get_answers_dir() / stem / "_pages"
     cache_dir.mkdir(parents=True, exist_ok=True)
     segments_data = {
         "dimensions": dimensions,
@@ -356,7 +359,7 @@ def apply_manual_segments(
                 continue
             flat_regions.append({"qid": qid, "page": page_1based, "bbox": bbox_full})
         if flat_regions:
-            paths = save_answer_images(pdf_path, full_res_pages, flat_regions)
+            paths = save_answer_images(pdf_path, full_res_pages, flat_regions, output_dir=get_answers_dir())
             answer_map[qid] = paths
 
     # 持久化 segments（for_llm 坐标）供下次编辑

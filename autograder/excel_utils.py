@@ -7,6 +7,7 @@ from typing import Any
 
 import openpyxl
 import xlrd
+import xlwt
 
 
 def read_student_roster(path: str | Path) -> list[dict[str, Any]]:
@@ -78,30 +79,42 @@ def export_graded_xlsx(
 
 
 def _export_from_xls(src: Path, results: dict, dst: Path) -> None:
-    """Read .xls with xlrd, write .xlsx with openpyxl."""
+    """Read .xls with xlrd, write .xls (xlwt) 或 .xlsx (openpyxl) 按 dst 后缀。"""
     rows = _read_xls(src)
-    wb = openpyxl.Workbook()
-    ws = wb.active
     if not rows:
-        wb.save(str(dst))
+        if dst.suffix.lower() == ".xls":
+            wb = xlwt.Workbook()
+            wb.add_sheet("Sheet1").write(0, 0, HEADER_STUDENT_ID)
+            wb.save(str(dst))
+        else:
+            openpyxl.Workbook().save(str(dst))
         return
 
     headers = list(rows[0].keys())
+    for row in rows:
+        sid = str(row.get(HEADER_STUDENT_ID, ""))
+        if sid in results:
+            row[HEADER_SCORE], row[HEADER_COMMENT] = results[sid]
+
+    if dst.suffix.lower() == ".xls":
+        wb = xlwt.Workbook()
+        ws = wb.add_sheet("Sheet1")
+        for c, h in enumerate(headers):
+            ws.write(0, c, h)
+        for r_idx, row in enumerate(rows, 1):
+            for c, h in enumerate(headers):
+                val = row.get(h, "")
+                ws.write(r_idx, c, val)
+        wb.save(str(dst))
+        return
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
     for c, h in enumerate(headers, 1):
         ws.cell(1, c, h)
-
     for r_idx, row in enumerate(rows, 2):
         for c, h in enumerate(headers, 1):
             ws.cell(r_idx, c, row.get(h, ""))
-        sid = str(row.get(HEADER_STUDENT_ID, ""))
-        if sid in results:
-            score, comment = results[sid]
-            score_col = headers.index(HEADER_SCORE) + 1 if HEADER_SCORE in headers else None
-            comment_col = headers.index(HEADER_COMMENT) + 1 if HEADER_COMMENT in headers else None
-            if score_col:
-                ws.cell(r_idx, score_col, score)
-            if comment_col:
-                ws.cell(r_idx, comment_col, comment)
     wb.save(str(dst))
 
 
@@ -127,3 +140,32 @@ def _export_from_xlsx(src: Path, results: dict, dst: Path) -> None:
             if comment_col:
                 ws.cell(row[0].row, comment_col, comment)
     wb.save(str(dst))
+
+
+def get_roster_headers(in_path: str | Path) -> list[str]:
+    """读取 in.xls 的表头，保证导出列与输入完全一致。"""
+    in_path = Path(in_path)
+    if not in_path.exists():
+        return [HEADER_STUDENT_ID, "姓名", HEADER_SCORE, HEADER_COMMENT]
+    rows = read_student_roster(in_path)
+    if not rows:
+        return [HEADER_STUDENT_ID, "姓名", HEADER_SCORE, HEADER_COMMENT]
+    return list(rows[0].keys())
+
+
+def write_roster_to_xls(
+    roster: list[dict[str, Any]],
+    headers: list[str],
+    out_path: str | Path,
+) -> None:
+    """将「评分统计」表格按 in.xls 的列顺序写入 .xls，供下载使用。"""
+    out_path = Path(out_path)
+    wb = xlwt.Workbook()
+    ws = wb.add_sheet("Sheet1")
+    for c, h in enumerate(headers):
+        ws.write(0, c, h)
+    for r_idx, row in enumerate(roster):
+        for c, h in enumerate(headers):
+            val = row.get(h, "")
+            ws.write(r_idx + 1, c, val)
+    wb.save(str(out_path))

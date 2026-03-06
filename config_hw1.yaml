@@ -1,16 +1,15 @@
 # AutoGraderLM Configuration
 
 assignment_name: "Assignment 1"
+assignment_path: "./hw1/"
 
 web_server:
   port: 8081
 
 
 assignment_configuration:
-  num_question: 5
-  num_student: 5 # equals to the number of files in pdf_folder_path, and number of rows in xlsx_in_path
-  pdf_folder_path: "./res/"
-  xlsx_in_path: "./图论-作业1_学生名单列表 .xls"
+  pdf_folder_path: "res/"
+  excel_in_path: "in.xls"
 
 assignment_segmentation:
   num_workers: 5
@@ -35,7 +34,7 @@ assignment_report:
     model: "gpt-5-mini"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/report.jinja"
-  xlsx_out_path: "./图论-作业1_学生名单列表_评分统计.xlsx"
+  excel_out_path: "out.xls"
 
 # 大模型对话日志，用于后台调试（记录请求 prompt 与响应内容）
 llm_log:

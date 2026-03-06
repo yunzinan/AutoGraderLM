@@ -1,10 +1,10 @@
-"""Configuration management – loads config.yaml and env vars."""
+"""Configuration management – loads config from -c/--config and env vars."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 from pydantic import BaseModel, Field
@@ -15,7 +15,8 @@ if _env_path.exists():
     from dotenv import load_dotenv
     load_dotenv(_env_path)
 
-CONFIG_PATH = Path("config.yaml")
+DEFAULT_CONFIG_PATH = Path("config.yaml")
+_config_file: Optional[Path] = None
 BASE_DIR = Path(".")
 
 
@@ -32,10 +33,8 @@ class WebServerConfig(BaseModel):
 
 
 class AssignmentConfigSection(BaseModel):
-    num_question: int = 5
-    num_student: int = 5
     pdf_folder_path: str = "./res/"
-    xlsx_in_path: str = ""
+    excel_in_path: str = ""
 
 
 class SegmentationConfig(BaseModel):
@@ -52,7 +51,7 @@ class GradingConfig(BaseModel):
 
 class ReportConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
-    xlsx_out_path: str = ""
+    excel_out_path: str = ""
 
 
 class LlmLogConfig(BaseModel):
@@ -63,6 +62,7 @@ class LlmLogConfig(BaseModel):
 
 class AppConfig(BaseModel):
     assignment_name: str = "Assignment 1"
+    assignment_path: str = "."
     web_server: WebServerConfig = Field(default_factory=WebServerConfig)
     assignment_configuration: AssignmentConfigSection = Field(default_factory=AssignmentConfigSection)
     assignment_segmentation: SegmentationConfig = Field(default_factory=SegmentationConfig)
@@ -95,11 +95,36 @@ def _inject_env(llm: LLMConfig) -> None:
         llm.api_key = os.getenv("OPENAI_API_KEY", "")
 
 
-def load_config(path: Path | str = CONFIG_PATH) -> AppConfig:
-    path = Path(path)
+def _resolve_under_assignment(assignment_base: Path, subpath: str) -> str:
+    """将相对路径解析到 assignment_base 下；已是绝对路径则原样返回。"""
+    p = Path(subpath)
+    if p.is_absolute():
+        return subpath
+    return str((assignment_base / subpath).resolve())
+
+
+def load_config(path: Path | str | None = None) -> AppConfig:
+    path = Path(path or _config_file or DEFAULT_CONFIG_PATH)
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
+    config_dir = path.resolve().parent
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    assignment_path_raw = raw.get("assignment_path", ".")
+    # 以配置文件所在目录为基准，解析 assignment_path，保证无论从哪启动都能找到文件
+    assignment_base = (config_dir / assignment_path_raw).resolve()
+    assignment_path = str(assignment_base)
+    raw["assignment_path"] = assignment_path
+    # 将 res / excel_in / excel_out 解析到 assignment_path 下
+    ac = raw.get("assignment_configuration") or {}
+    if "pdf_folder_path" in ac:
+        ac["pdf_folder_path"] = _resolve_under_assignment(assignment_base, ac["pdf_folder_path"])
+    if "excel_in_path" in ac:
+        ac["excel_in_path"] = _resolve_under_assignment(assignment_base, ac["excel_in_path"])
+    raw["assignment_configuration"] = ac
+    ar = raw.get("assignment_report") or {}
+    if "excel_out_path" in ar:
+        ar["excel_out_path"] = _resolve_under_assignment(assignment_base, ar["excel_out_path"])
+    raw["assignment_report"] = ar
     cfg = AppConfig(**raw)
     for llm_cfg in (
         cfg.assignment_segmentation.llm,
@@ -113,8 +138,77 @@ def load_config(path: Path | str = CONFIG_PATH) -> AppConfig:
 _config: Optional[AppConfig] = None
 
 
+def set_config_file(path: str | Path) -> None:
+    """通过 main.py -c/--config 指定配置文件路径。"""
+    global _config_file
+    _config_file = Path(path)
+    # 清空已加载的配置，下次 get_config() 会重新从新路径加载
+    global _config
+    _config = None
+
+
 def get_config() -> AppConfig:
     global _config
     if _config is None:
         _config = load_config()
     return _config
+
+
+def get_assignment_path() -> Path:
+    """当前作业根目录（res/questions/answers/results 等均在其下）。"""
+    return Path(get_config().assignment_path)
+
+
+def resolve_assignment_path(path: str) -> Path:
+    """将配置中的相对路径（如 questions/Q1/question_0.png）解析为绝对路径；已是绝对路径则原样返回。"""
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    return get_assignment_path() / path
+
+
+def to_relative_url_path(path: str) -> str:
+    """将绝对路径转为相对 assignment 的 URL 路径，供前端 /files/ + path 使用。"""
+    if not path:
+        return path
+    p = Path(path)
+    base = get_assignment_path()
+    if p.is_absolute():
+        try:
+            rel = p.relative_to(base)
+            return str(rel).replace("\\", "/")
+        except ValueError:
+            return path
+    return path
+
+
+def get_questions_dir() -> Path:
+    return get_assignment_path() / "questions"
+
+
+def get_answers_dir() -> Path:
+    return get_assignment_path() / "answers"
+
+
+def get_results_dir() -> Path:
+    return get_assignment_path() / "results"
+
+
+def get_num_questions() -> int:
+    """根据 {assignment_path}/questions 下有效题目配置数量推断题目数（每个子目录含 config.json 计一题）。"""
+    qdir = get_questions_dir()
+    if not qdir.exists():
+        return 0
+    return sum(
+        1 for d in qdir.iterdir()
+        if d.is_dir() and (d / "config.json").exists()
+    )
+
+
+def get_num_student() -> int:
+    """以 pdf_folder_path 下 PDF 数量作为学生数（PDF 为 excel 名单的子集，表格照常加载）。"""
+    cfg = get_config()
+    pdf_dir = Path(cfg.assignment_configuration.pdf_folder_path)
+    if not pdf_dir.exists():
+        raise FileNotFoundError(f"pdf_folder_path 不存在: {pdf_dir}")
+    return sum(1 for _ in pdf_dir.glob("*.pdf")) + sum(1 for _ in pdf_dir.glob("*.PDF"))

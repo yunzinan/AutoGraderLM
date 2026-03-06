@@ -12,14 +12,12 @@ from typing import TypedDict
 from jinja2 import Template
 from langgraph.graph import END, StateGraph
 
-from autograder.config import AppConfig
+from autograder.config import AppConfig, get_results_dir, resolve_assignment_path
 from autograder.llm import build_llm, build_vision_message_segmented, extract_json, invoke_with_log
 from autograder.models import GradingOutput, GradingRecord, QuestionConfig, StudentResult
 from autograder.pdf_utils import parse_student_info
 
 logger = logging.getLogger(__name__)
-
-RESULTS_DIR = Path("./results")
 
 
 class GradeState(TypedDict, total=False):
@@ -111,13 +109,14 @@ def build_grading_graph(cfg: AppConfig) -> StateGraph:
 
 
 def _save_student_result(result: StudentResult) -> None:
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = RESULTS_DIR / f"{Path(result.filename).stem}.json"
+    results_dir = get_results_dir()
+    results_dir.mkdir(parents=True, exist_ok=True)
+    path = results_dir / f"{Path(result.filename).stem}.json"
     path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
 
 
 def load_student_result(filename_stem: str) -> StudentResult | None:
-    path = RESULTS_DIR / f"{filename_stem}.json"
+    path = get_results_dir() / f"{filename_stem}.json"
     if not path.exists():
         return None
     return StudentResult.model_validate_json(path.read_text(encoding="utf-8"))
@@ -127,9 +126,10 @@ def load_all_results() -> list[StudentResult]:
     """加载 results 目录下所有学生评阅结果（持久化 JSON），不论是否有人工复核。
     仅加载学生结果文件，跳过 question_reports.json 等非学生结果文件。
     """
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    results_dir = get_results_dir()
+    results_dir.mkdir(parents=True, exist_ok=True)
     results = []
-    for p in sorted(RESULTS_DIR.glob("*.json")):
+    for p in sorted(results_dir.glob("*.json")):
         if p.name == "question_reports.json":
             continue
         try:
@@ -148,7 +148,14 @@ def _grade_one_sync(
     answer_paths: list[str],
 ) -> tuple[str, GradingRecord]:
     """同步执行单题评阅，供在线程中调用。返回 (stem, record)。"""
-    question_image_paths = [p for p in (q.question_images or []) if p and Path(p).exists()]
+    question_image_paths = [
+        str(resolve_assignment_path(p)) for p in (q.question_images or [])
+        if p and resolve_assignment_path(p).exists()
+    ]
+    example_paths = [
+        str(resolve_assignment_path(p)) for p in (q.example_answer_images or [])
+        if p and resolve_assignment_path(p).exists()
+    ]
     init_state: GradeState = {
         "qid": qid,
         "max_score": q.score,
@@ -157,7 +164,7 @@ def _grade_one_sync(
         "example_answer_text": q.example_answer_text or "",
         "question_image_paths": question_image_paths,
         "answer_image_paths": answer_paths,
-        "example_image_paths": q.example_answer_images or [],
+        "example_image_paths": example_paths,
         "output": None,
         "retry_count": 0,
         "max_retry": grading_cfg.max_retry,
