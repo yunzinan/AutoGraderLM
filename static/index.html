@@ -199,7 +199,6 @@
         <div class="mb-3 rounded-xl bg-gradient-to-br from-brand-600 to-indigo-600 p-4 text-white shadow-lg">
           <p class="text-xs uppercase tracking-[0.18em] text-indigo-100">AutoGraderLM</p>
           <h1 class="mt-2 text-lg font-bold">{{ configData.assignment_name || '智能作业评分中台' }}</h1>
-          <p class="mt-2 text-xs text-indigo-100/90">围绕“配置-解析-评分-复核-统计”全流程设计</p>
         </div>
         <div class="mb-5 rounded-xl border-2 px-4 py-3 shadow-sm" :class="statusBoxClass">
           <p class="text-xs font-semibold uppercase tracking-wide opacity-80">状态</p>
@@ -687,6 +686,8 @@
               <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div class="flex flex-wrap items-center gap-2">
                   <p class="font-bold text-slate-900">{{ r.qid }}</p>
+                  <span class="text-xs text-slate-500">评阅人: {{ r.grader === 'human' ? '人工评阅' : r.grader }}</span>
+                  <span v-if="r.graded_at" class="text-xs text-slate-500">评阅时间: {{ formatGradedAt(r.graded_at) }}</span>
                   <button type="button" class="btn btn-sm btn-secondary" @click="regradeQuestion(selectedStudent, r.qid)" :disabled="regradingQid === r.qid" title="使用 AI 重新评阅该题">
                     {{ regradingQid === r.qid ? '评阅中…' : 'AI重新评阅' }}
                   </button>
@@ -697,7 +698,6 @@
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="badge" :class="confidenceBadge(r.confidence)">confidence {{ r.confidence }}</span>
                   <span class="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ r.score }} 分</span>
-                  <span class="text-xs text-slate-500">评阅人: {{ r.grader === 'human' ? '人工评阅' : r.grader }}</span>
                 </div>
               </div>
               <div v-if="getQuestionByQid(r.qid)" class="mb-3 rounded-lg bg-slate-50 p-3">
@@ -1220,6 +1220,17 @@ createApp({
       return 'bg-red-100 text-red-700';
     }
 
+    function formatGradedAt(iso) {
+      if (!iso) return '';
+      try {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+      } catch {
+        return iso;
+      }
+    }
+
     function getQuestionByQid(qid) {
       return questions.value.find(q => q.qid === qid);
     }
@@ -1572,6 +1583,7 @@ createApp({
       setFileInputRef,
       onPaste,
       confidenceBadge,
+      formatGradedAt,
       getQuestionByQid,
       renderMd,
       maxDistCount,

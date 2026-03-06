@@ -14,7 +14,7 @@ from langgraph.graph import END, StateGraph
 
 from autograder.config import AppConfig, get_results_dir, resolve_assignment_path
 from autograder.llm import build_llm, build_vision_message_segmented, extract_json, invoke_with_log
-from autograder.models import GradingOutput, GradingRecord, QuestionConfig, StudentResult
+from autograder.models import GradingOutput, GradingRecord, QuestionConfig, StudentResult, _now_iso
 from autograder.pdf_utils import parse_student_info
 
 logger = logging.getLogger(__name__)
@@ -178,6 +178,7 @@ def _grade_one_sync(
         question_index=getattr(q, "question_index", None),
         answer=answer_paths,
         grader=grading_cfg.llm.model,
+        graded_at=_now_iso(),
     )
     if final["output"] is not None:
         out = GradingOutput(**final["output"])

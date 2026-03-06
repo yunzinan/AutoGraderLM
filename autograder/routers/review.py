@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from autograder.config import get_results_dir, to_relative_url_path
-from autograder.models import GradingRecord, StudentResult
+from autograder.models import GradingRecord, StudentResult, _now_iso
 from autograder.pipeline.grading import load_all_results, load_student_result
 
 router = APIRouter(prefix="/api/review", tags=["review"])
@@ -29,6 +29,7 @@ def get_review_item(filename_stem: str, qid: str) -> dict:
                 "qid": r.qid,
                 "answer": [to_relative_url_path(p) for p in (r.answer or [])],
                 "grader": r.grader,
+                "graded_at": r.graded_at,
                 "score": r.score,
                 "confidence": r.confidence,
                 "summary": r.summary,
@@ -52,6 +53,7 @@ def get_review_items() -> list[dict]:
                     "qid": r.qid,
                     "answer": [to_relative_url_path(p) for p in (r.answer or [])],
                     "grader": r.grader,
+                    "graded_at": r.graded_at,
                     "score": r.score,
                     "confidence": r.confidence,
                     "summary": r.summary,
@@ -83,6 +85,7 @@ def update_review(filename_stem: str, qid: str, body: ReviewUpdate) -> dict:
             r.summary = body.summary
             r.comments = body.comments
             r.grader = "human"
+            r.graded_at = _now_iso()
             updated = True
             break
 

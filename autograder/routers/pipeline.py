@@ -454,6 +454,7 @@ async def regrade_single(stem: str, qid: str) -> dict:
             r.summary = record.summary
             r.comments = record.comments
             r.grader = record.grader
+            r.graded_at = record.graded_at
             updated = True
             break
     if not updated:

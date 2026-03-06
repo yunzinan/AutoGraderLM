@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import IntEnum
 from pathlib import Path
 from typing import Optional
@@ -61,6 +62,11 @@ class GradingOutput(BaseModel):
     comments: str = ""
 
 
+def _now_iso() -> str:
+    """返回当前时间的 ISO 8601 格式字符串。"""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 class GradingRecord(BaseModel):
     filename: str
     qid: str
@@ -68,6 +74,9 @@ class GradingRecord(BaseModel):
     question_index: Optional[int] = None
     answer: list[str] = Field(default_factory=list)
     grader: str = ""
+    """评阅人：LLM 时为模型名，人工复核后为 'human'"""
+    graded_at: Optional[str] = None
+    """评阅时间，ISO 8601 格式"""
     score: int = Field(ge=0, default=0)
     confidence: int = Field(ge=0, le=4, default=0)
     summary: str = ""
