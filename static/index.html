@@ -196,10 +196,14 @@
   <div class="mx-auto max-w-[1480px]">
     <div class="grid grid-cols-1 gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
       <aside class="panel p-4 lg:p-5">
-        <div class="mb-5 rounded-xl bg-gradient-to-br from-brand-600 to-indigo-600 p-4 text-white shadow-lg">
+        <div class="mb-3 rounded-xl bg-gradient-to-br from-brand-600 to-indigo-600 p-4 text-white shadow-lg">
           <p class="text-xs uppercase tracking-[0.18em] text-indigo-100">AutoGraderLM</p>
           <h1 class="mt-2 text-lg font-bold">{{ configData.assignment_name || '智能作业评分中台' }}</h1>
           <p class="mt-2 text-xs text-indigo-100/90">围绕“配置-解析-评分-复核-统计”全流程设计</p>
+        </div>
+        <div class="mb-5 rounded-xl border-2 px-4 py-3 shadow-sm" :class="statusBoxClass">
+          <p class="text-xs font-semibold uppercase tracking-wide opacity-80">状态</p>
+          <p class="mt-1 text-base font-bold">{{ pipelineStateText }}</p>
         </div>
         <nav class="space-y-2">
           <button
@@ -217,30 +221,6 @@
       </aside>
 
       <main class="space-y-5">
-        <section class="panel p-4 lg:p-5">
-          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p class="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">当前模块</p>
-              <h2 class="mt-1 text-2xl font-bold text-slate-900">{{ currentNav.label }}</h2>
-              <p class="mt-1 text-sm text-slate-600">{{ currentNav.desc }}</p>
-            </div>
-            <div class="grid grid-cols-3 gap-3 text-center">
-              <div class="rounded-xl bg-slate-50 px-4 py-3">
-                <p class="text-xs text-slate-500">题目数</p>
-                <p class="mt-1 text-xl font-bold text-slate-900">{{ questions.length }}</p>
-              </div>
-              <div class="rounded-xl bg-slate-50 px-4 py-3">
-                <p class="text-xs text-slate-500">复核待处理</p>
-                <p class="mt-1 text-xl font-bold text-amber-600">{{ reviewItems.length }}</p>
-              </div>
-              <div class="rounded-xl bg-slate-50 px-4 py-3">
-                <p class="text-xs text-slate-500">状态</p>
-                <p class="mt-1 text-sm font-bold" :class="pipelineStateClass">{{ pipelineStateText }}</p>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <section v-if="page === 'config'" class="space-y-4">
           <div class="panel p-4 lg:p-5">
             <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -248,7 +228,13 @@
                 <h3 class="text-lg font-bold text-slate-900">作业配置</h3>
                 <p class="mt-1 text-sm text-slate-600">配置题干、分值、评分标准与参考答案，保存至题库目录。</p>
               </div>
-              <button class="btn btn-primary" @click="addQuestion">+ 新增题目</button>
+              <div class="flex items-center gap-3">
+                <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
+                  <p class="text-xs text-slate-500">题目数</p>
+                  <p class="mt-1 text-2xl font-bold text-slate-900">{{ questions.length }}</p>
+                </div>
+                <button class="btn btn-primary" @click="addQuestion">+ 新增题目</button>
+              </div>
             </div>
           </div>
 
@@ -357,11 +343,16 @@
 
         <section v-if="page === 'segment'" class="space-y-4">
           <div class="panel p-5">
-            <h3 class="text-lg font-bold text-slate-900">作业解析（切分）</h3>
-            <p class="mt-2 text-sm leading-6 text-slate-600">
-              从 <code class="rounded bg-slate-100 px-2 py-0.5 text-brand-700">{{ configData.assignment_configuration?.pdf_folder_path || './res/' }}</code>
-              读取作业 PDF，按题目切分为图片，输出到答案目录。
-            </p>
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 class="text-lg font-bold text-slate-900">作业解析</h3>
+                <p class="mt-2 text-sm leading-6 text-slate-600">读取作业 PDF，按题目切分为图片。</p>
+              </div>
+              <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
+                <p class="text-xs text-slate-500">已切分作业数</p>
+                <p class="mt-1 text-2xl font-bold text-slate-900">{{ segmentEditorAssignments.length }}</p>
+              </div>
+            </div>
             <div class="mt-4 flex flex-wrap items-center gap-2">
               <button class="btn btn-primary" @click="runPipeline('segment')" :disabled="isSegmentBusy || isGradingBusy || isReportBusy">开始切分</button>
               <button v-if="isSegmentBusy" class="btn btn-secondary" @click="cancelPipeline">停止</button>
@@ -381,7 +372,7 @@
           </div>
 
           <div class="panel p-5 mt-4">
-            <h3 class="text-lg font-bold text-slate-900">人工重新切分</h3>
+            <h3 class="text-base font-bold text-slate-900">人工重新切分</h3>
             <p class="mt-2 text-sm leading-6 text-slate-600">
               选择一份已切分的作业，在 for_llm 页面上调整每道题的框选区域（可拖动、新增、删除框），保存后将更新该作业的 segment 并重新生成答案图。
             </p>
@@ -486,9 +477,7 @@
         <section v-if="page === 'grade'" class="space-y-4">
           <div class="panel p-5">
             <h3 class="text-lg font-bold text-slate-900">作业评分</h3>
-            <p class="mt-2 text-sm leading-6 text-slate-600">
-              基于切分结果与题目配置逐题评分。系统会自动重试低置信度结果并将需处理样本汇总至人工复核。
-            </p>
+            <p class="mt-2 text-sm leading-6 text-slate-600">基于切分结果与题目配置逐题评分，自动重试低置信度结果并汇总至人工复核。</p>
             <div class="mt-4 flex flex-wrap items-center gap-2">
               <button class="btn btn-primary" @click="runPipeline('grade')" :disabled="isGradingBusy || isSegmentBusy || isReportBusy">开始评分</button>
               <button v-if="isGradingBusy" class="btn btn-secondary" @click="cancelPipeline">停止</button>
@@ -507,8 +496,16 @@
 
         <section v-if="page === 'review'" class="space-y-4">
           <div class="panel p-5">
-            <h3 class="text-lg font-bold text-slate-900">人工复核</h3>
-            <p class="mt-1 text-sm text-slate-600">集中处理低置信度作答，支持人工修正分数与评语。</p>
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 class="text-lg font-bold text-slate-900">人工复核</h3>
+                <p class="mt-1 text-sm text-slate-600">集中处理低置信度作答，支持人工修正分数与评语。</p>
+              </div>
+              <div class="rounded-xl px-4 py-3 text-center" :class="reviewItems.length ? 'bg-amber-50' : 'bg-slate-50'">
+                <p class="text-xs text-slate-500">待处理</p>
+                <p class="mt-1 text-2xl font-bold" :class="reviewItems.length ? 'text-amber-600' : 'text-slate-900'">{{ reviewItems.length }}</p>
+              </div>
+            </div>
           </div>
 
           <div v-if="!reviewItems.length" class="panel p-10 text-center text-slate-500">
@@ -832,7 +829,6 @@ createApp({
     const isSegmentBusy = computed(() => status.stage === 'segmentation');
     const isGradingBusy = computed(() => status.stage === 'grading');
     const isReportBusy = computed(() => status.stage === 'report');
-    const currentNav = computed(() => navItems.find(item => item.id === page.value) || navItems[0]);
     const pipelineStateText = computed(() => {
       if (status.stage === 'idle') return '待执行';
       if (status.stage === 'done') return '已完成';
@@ -842,11 +838,11 @@ createApp({
       if (status.stage === 'grading') return '评分中';
       return '运行中';
     });
-    const pipelineStateClass = computed(() => {
-      if (status.stage === 'done') return 'text-emerald-600';
-      if (status.stage === 'error') return 'text-red-600';
-      if (status.stage === 'idle') return 'text-slate-600';
-      return 'text-brand-600';
+    const statusBoxClass = computed(() => {
+      if (status.stage === 'done') return 'border-emerald-400 bg-emerald-50 text-emerald-800';
+      if (status.stage === 'error') return 'border-red-400 bg-red-50 text-red-800';
+      if (status.stage === 'idle') return 'border-slate-200 bg-slate-50 text-slate-800';
+      return 'border-amber-400 bg-amber-50 text-amber-800';
     });
 
     const rosterHeadersDisplay = computed(() => {
@@ -1399,7 +1395,6 @@ createApp({
     return {
       page,
       navItems,
-      currentNav,
       configData,
       questions,
       toast,
@@ -1415,7 +1410,7 @@ createApp({
       isGradingBusy,
       isReportBusy,
       pipelineStateText,
-      pipelineStateClass,
+      statusBoxClass,
       reviewItems,
       studentList,
       selectedStudent,
