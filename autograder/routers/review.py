@@ -9,9 +9,32 @@ from pydantic import BaseModel
 
 from autograder.config import get_results_dir, to_relative_url_path
 from autograder.models import GradingRecord, StudentResult
-from autograder.pipeline.grading import load_all_results
+from autograder.pipeline.grading import load_all_results, load_student_result
 
 router = APIRouter(prefix="/api/review", tags=["review"])
+
+
+@router.get("/item/{filename_stem}/{qid}")
+def get_review_item(filename_stem: str, qid: str) -> dict:
+    """获取指定学生指定题目的评阅记录，用于人工复核（不论置信度）。"""
+    sr = load_student_result(filename_stem)
+    if not sr:
+        return {"error": "未找到该学生的评阅结果"}
+    for r in sr.records:
+        if r.qid == qid:
+            return {
+                "filename": sr.filename,
+                "student_id": sr.student_id,
+                "student_name": sr.student_name,
+                "qid": r.qid,
+                "answer": [to_relative_url_path(p) for p in (r.answer or [])],
+                "grader": r.grader,
+                "score": r.score,
+                "confidence": r.confidence,
+                "summary": r.summary,
+                "comments": r.comments,
+            }
+    return {"error": f"未找到 {qid} 的评阅记录"}
 
 
 @router.get("")

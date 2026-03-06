@@ -14,7 +14,14 @@ from fastapi import APIRouter, Body
 
 from autograder.config import get_config, get_answers_dir, get_results_dir, resolve_assignment_path
 from autograder.models import PipelineStatus, QuestionReport
-from autograder.pipeline.grading import load_all_results, run_grading
+from autograder.pipeline.grading import (
+    _grade_one_sync,
+    _save_student_result,
+    build_grading_graph,
+    load_all_results,
+    load_student_result,
+    run_grading,
+)
 from autograder.pipeline.report import generate_all_reports, run_report_sync
 from autograder.pipeline.segmentation import (
     apply_manual_segments,
@@ -167,8 +174,8 @@ async def start_grading() -> dict:
     if _status.stage not in ("idle", "done", "error"):
         return {"error": f"Pipeline already running: {_status.stage}"}
 
-    if not _answer_map:
-        _answer_map = _build_answer_map_from_disk()
+    # 始终从磁盘加载完整 answer_map，避免因「切分编辑」只保存了单份作业而导致只评一名学生
+    _answer_map = _build_answer_map_from_disk()
     if not _answer_map:
         return {"error": "请先运行作业切分，或确认 answers 目录下已有切分结果"}
 
@@ -396,6 +403,66 @@ async def cancel_pipeline() -> dict:
             _status.total = 0
             _status.errors = []
     return {"ok": True, "message": "已取消"}
+
+
+@router.post("/regrade/{stem}/{qid}")
+async def regrade_single(stem: str, qid: str) -> dict:
+    """对指定学生的指定题目进行 AI 重新评阅。"""
+    global _answer_map
+    if not _answer_map:
+        _answer_map = _build_answer_map_from_disk()
+    if stem not in _answer_map or qid not in _answer_map[stem]:
+        return {"error": f"未找到该学生的 {qid} 作答"}
+
+    from autograder.config import get_config
+
+    questions = load_all_questions()
+    q_map = {q.qid: q for q in questions}
+    q = q_map.get(qid)
+    if not q:
+        return {"error": f"未找到题目配置 {qid}"}
+
+    cfg = get_config()
+    graph = build_grading_graph(cfg)
+    app = graph.compile()
+    grading_cfg = cfg.assignment_grading
+    answer_paths = _answer_map[stem][qid]
+
+    try:
+        _, record = await asyncio.to_thread(
+            _grade_one_sync,
+            app,
+            grading_cfg,
+            stem,
+            qid,
+            q,
+            answer_paths,
+        )
+    except Exception as e:
+        logger.exception("Regrade failed for %s/%s", stem, qid)
+        return {"error": str(e)}
+
+    sr = load_student_result(stem)
+    if not sr:
+        return {"error": "未找到该学生的评阅结果"}
+
+    updated = False
+    for r in sr.records:
+        if r.qid == qid:
+            r.score = record.score
+            r.confidence = record.confidence
+            r.summary = record.summary
+            r.comments = record.comments
+            r.grader = record.grader
+            updated = True
+            break
+    if not updated:
+        sr.records.append(record)
+        sr.records.sort(key=lambda x: x.qid)
+
+    sr.total_score = sum(r.score for r in sr.records)
+    _save_student_result(sr)
+    return {"ok": True, "score": record.score, "confidence": record.confidence}
 
 
 @router.post("/reset")

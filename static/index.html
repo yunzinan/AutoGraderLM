@@ -508,8 +508,80 @@
             </div>
           </div>
 
-          <div v-if="!reviewItems.length" class="panel p-10 text-center text-slate-500">
+          <div v-if="!reviewItems.length && !reviewTargetItem" class="panel p-10 text-center text-slate-500">
             当前没有需要复核的作答。
+          </div>
+
+          <div v-if="reviewTargetItem" class="panel p-4 lg:p-5 border-2 border-brand-300">
+            <div class="mb-2 rounded-lg bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700">来自评阅结果的单题复核</div>
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-bold text-slate-900">{{ reviewTargetItem.student_name }}</span>
+                <span class="text-sm text-slate-500">{{ reviewTargetItem.student_id }}</span>
+                <span class="badge" :class="confidenceBadge(reviewTargetItem.confidence)">confidence {{ reviewTargetItem.confidence }}</span>
+              </div>
+              <span class="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ reviewTargetItem.qid }}</span>
+            </div>
+            <div v-if="getQuestionByQid(reviewTargetItem.qid)" class="mb-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+              <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">题目信息</p>
+              <p v-if="getQuestionByQid(reviewTargetItem.qid).question_text" class="mb-2 text-sm text-slate-700">{{ getQuestionByQid(reviewTargetItem.qid).question_text }}</p>
+              <div class="mb-2 flex flex-wrap gap-2">
+                <div v-for="img in getQuestionByQid(reviewTargetItem.qid).question_images" :key="img" class="relative inline-block group">
+                  <img :src="'/files/' + img" class="max-h-32 rounded-lg border border-slate-200 bg-white p-1" />
+                  <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                  </button>
+                </div>
+              </div>
+              <div v-if="getQuestionByQid(reviewTargetItem.qid).rubric" class="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                <p class="mb-1 text-xs font-semibold text-slate-500">评分标准</p>
+                <p class="whitespace-pre-wrap">{{ getQuestionByQid(reviewTargetItem.qid).rubric }}</p>
+              </div>
+              <template v-if="getQuestionByQid(reviewTargetItem.qid).example_answer_text || (getQuestionByQid(reviewTargetItem.qid).example_answer_images && getQuestionByQid(reviewTargetItem.qid).example_answer_images.length)">
+                <div class="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                  <p class="mb-1 text-xs font-semibold text-slate-500">参考答案</p>
+                  <p v-if="getQuestionByQid(reviewTargetItem.qid).example_answer_text" class="mb-2 whitespace-pre-wrap">{{ getQuestionByQid(reviewTargetItem.qid).example_answer_text }}</p>
+                  <div class="flex flex-wrap gap-2">
+                    <div v-for="img in (getQuestionByQid(reviewTargetItem.qid).example_answer_images || [])" :key="img" class="relative inline-block group">
+                      <img :src="'/files/' + img" class="max-h-32 rounded-lg border border-slate-200 bg-white p-1" />
+                      <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div class="mb-3 flex flex-wrap gap-2">
+              <div v-for="img in reviewTargetItem.answer" :key="img" class="relative inline-block group">
+                <img :src="'/files/' + img" class="max-h-44 rounded-lg border border-slate-200 bg-white p-1" />
+                <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                </button>
+              </div>
+            </div>
+            <div class="mb-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><b>LLM 总结：</b>{{ reviewTargetItem.summary }}</div>
+            <div class="mb-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-700"><b>LLM 评语：</b>{{ reviewTargetItem.comments }}</div>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
+              <div>
+                <label class="form-label">分数<span v-if="getQuestionByQid(reviewTargetItem.qid)" class="font-normal text-slate-500">（满分 {{ getQuestionByQid(reviewTargetItem.qid).score }} 分）</span></label>
+                <input type="number" class="input" v-model.number="reviewTargetItem.score" :min="0" :max="getQuestionByQid(reviewTargetItem.qid) ? getQuestionByQid(reviewTargetItem.qid).score : 999" />
+              </div>
+              <div>
+                <label class="form-label">置信度</label>
+                <select class="input" v-model.number="reviewTargetItem.confidence">
+                  <option v-for="opt in confidenceOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+                </select>
+              </div>
+              <div class="md:col-span-2">
+                <label class="form-label">评语</label>
+                <textarea class="input min-h-[100px] resize-y" rows="4" v-model="reviewTargetItem.comments" placeholder="可多行填写评语"></textarea>
+              </div>
+            </div>
+            <div class="mt-4 flex justify-end gap-2">
+              <button type="button" class="btn btn-secondary" @click="reviewTargetItem = null; reviewTargetStem = ''; reviewTargetQid = ''">关闭</button>
+              <button class="btn btn-success" @click="submitReviewAndClearTarget(reviewTargetItem)">提交复核</button>
+            </div>
           </div>
 
           <div v-for="item in reviewItems" :key="item.filename + item.qid" class="panel p-4 lg:p-5">
@@ -613,7 +685,15 @@
             </div>
             <div v-for="r in currentResult.records" :key="r.qid" class="mb-4 rounded-xl border border-slate-200 bg-white p-4 last:mb-0">
               <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <p class="font-bold text-slate-900">{{ r.qid }}</p>
+                <div class="flex flex-wrap items-center gap-2">
+                  <p class="font-bold text-slate-900">{{ r.qid }}</p>
+                  <button type="button" class="btn btn-sm btn-secondary" @click="regradeQuestion(selectedStudent, r.qid)" :disabled="regradingQid === r.qid" title="使用 AI 重新评阅该题">
+                    {{ regradingQid === r.qid ? '评阅中…' : 'AI重新评阅' }}
+                  </button>
+                  <button type="button" class="btn btn-sm btn-secondary" @click="goToReviewFor(selectedStudent, r.qid)" title="跳转到人工复核页面">
+                    人工复核
+                  </button>
+                </div>
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="badge" :class="confidenceBadge(r.confidence)">confidence {{ r.confidence }}</span>
                   <span class="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{{ r.score }} 分</span>
@@ -775,6 +855,10 @@ createApp({
     const status = reactive({ stage: 'idle', message: '', current: 0, total: 0, errors: [] });
     const lastAction = ref('');
     const reviewItems = ref([]);
+    const reviewTargetStem = ref('');
+    const reviewTargetQid = ref('');
+    const reviewTargetItem = ref(null);
+    const regradingQid = ref('');
     const studentList = ref([]);
     const selectedStudent = ref('');
     const studentResultLoading = ref(false);
@@ -886,6 +970,38 @@ createApp({
       selectedStudent.value = s.filename_stem;
       page.value = 'results';
       loadStudentResult();
+    }
+
+    async function regradeQuestion(stem, qid) {
+      if (!stem || !qid) return;
+      regradingQid.value = qid;
+      try {
+        const res = await api(`/api/pipeline/regrade/${encodeURIComponent(stem)}/${encodeURIComponent(qid)}`, { method: 'POST' });
+        if (res.error) { showToast(res.error || '重新评阅失败', 'error'); return; }
+        showToast(`AI 重新评阅完成，得分 ${res.score}，置信度 ${res.confidence}`);
+        await loadStudentResult();
+        await loadStudentList();
+        await loadRoster();
+        await loadSummary();
+        await loadReviewItems();
+      } finally {
+        regradingQid.value = '';
+      }
+    }
+
+    async function goToReviewFor(stem, qid) {
+      if (!stem || !qid) return;
+      reviewTargetStem.value = stem;
+      reviewTargetQid.value = qid;
+      reviewTargetItem.value = null;
+      page.value = 'review';
+      try {
+        const data = await api(`/api/review/item/${encodeURIComponent(stem)}/${encodeURIComponent(qid)}`);
+        if (data.error) { showToast(data.error || '加载失败', 'error'); return; }
+        reviewTargetItem.value = data;
+      } catch (e) {
+        showToast('加载复核项失败', 'error');
+      }
     }
 
     const api = async (path, opts) => {
@@ -1080,6 +1196,14 @@ createApp({
       if (selectedStudent.value === stem) await loadStudentResult();
       await loadRoster();
       await loadSummary();
+    }
+
+    async function submitReviewAndClearTarget(item) {
+      if (!item) return;
+      await submitReview(item);
+      reviewTargetItem.value = null;
+      reviewTargetStem.value = '';
+      reviewTargetQid.value = '';
     }
 
     const confidenceOptions = [
@@ -1412,6 +1536,10 @@ createApp({
       pipelineStateText,
       statusBoxClass,
       reviewItems,
+      reviewTargetItem,
+      reviewTargetStem,
+      reviewTargetQid,
+      regradingQid,
       studentList,
       selectedStudent,
       studentResultLoading,
@@ -1424,6 +1552,9 @@ createApp({
       rosterSortOrder,
       setRosterSort,
       goToStudentResult,
+      regradeQuestion,
+      goToReviewFor,
+      submitReviewAndClearTarget,
       ROSTER_SORTABLE_HEADERS,
       summary,
       reports,
