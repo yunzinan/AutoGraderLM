@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import glob
+import json
 import logging
+import re
+import shutil
+import subprocess
+import tempfile
 import threading
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Response
 
 from autograder.config import get_config, get_answers_dir, get_results_dir, resolve_assignment_path
 from autograder.pdf_utils import student_canonical_stem
@@ -78,6 +83,362 @@ _answer_map: dict[str, dict[str, list[str]]] = {}
 _reports: list[QuestionReport] = []
 _running_task: asyncio.Task | None = None
 _report_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="report")
+
+
+def _anonymize_text(text: str, names: list[str]) -> str:
+    """将文本中出现的学生姓名统一替换为 ***。"""
+    if not text:
+        return ""
+    cleaned = [n for n in names if n]
+    if not cleaned:
+        return text
+    escaped_names = sorted((re.escape(n) for n in cleaned), key=len, reverse=True)
+    pattern = re.compile("|".join(escaped_names))
+    return pattern.sub("***", text)
+
+
+def _anonymize_text_with_token(text: str, names: list[str], token: str) -> str:
+    """将文本中出现的学生姓名替换为指定 token（用于后续安全渲染）。"""
+    if not text:
+        return ""
+    cleaned = [n for n in names if n]
+    if not cleaned:
+        return text
+    escaped_names = sorted((re.escape(n) for n in cleaned), key=len, reverse=True)
+    pattern = re.compile("|".join(escaped_names))
+    return pattern.sub(token, text)
+
+
+def _strip_outer_markdown_fence(text: str) -> str:
+    """去掉最外层 markdown 代码围栏。"""
+    if not text:
+        return ""
+    out = text.strip().replace("\r\n", "\n")
+    fence = re.match(r"^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$", out)
+    return fence.group(1).strip() if fence else out
+
+
+def _normalize_latex_artifacts(text: str) -> str:
+    """修正常见的 LaTeX 转义污染（如 \\{}begin / \\{}[ / \\{}Theta）。"""
+    if not text:
+        return ""
+    out = text
+    # 原始 `\\` 常被污染为 `\{}\{}`
+    out = out.replace(r"\{}\{}", r"\\")
+    # 常见污染：`\{}` 作为反斜杠占位符，恢复为 `\`
+    out = out.replace(r"\{}", "\\")
+    # 清理无效单反斜杠（如 `\ `、`\,` 等被污染残留）
+    out = re.sub(r"(?<!\\)\\(?=\s)", "", out)
+    out = re.sub(r"(?<!\\)\\(?=[,，。；：!！?？])", "", out)
+    # 归一化行尾空白
+    out = out.replace("\r\n", "\n")
+    return out
+
+
+def _protect_math_segments(text: str) -> tuple[str, dict[str, str]]:
+    """保护 LaTeX 数学公式片段，避免被文本转义破坏。"""
+    tokens: dict[str, str] = {}
+    pattern = re.compile(
+        r"\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\$)\$(?!\$)(?:\\.|[^$\\\n])+(?<!\\)\$(?!\$)",
+        re.MULTILINE,
+    )
+
+    def _repl(match: re.Match) -> str:
+        key = f"AUTOMATHTOKEN{len(tokens)}"
+        tokens[key] = match.group(0)
+        return key
+
+    return pattern.sub(_repl, text), tokens
+
+
+def _escape_latex_text(text: str) -> str:
+    """转义普通文本中的 LaTeX 特殊字符。"""
+    out = text
+    out = out.replace("\\", r"\textbackslash{}")
+    out = out.replace("&", r"\&")
+    out = out.replace("%", r"\%")
+    out = out.replace("#", r"\#")
+    out = out.replace("_", r"\_")
+    out = out.replace("{", r"\{")
+    out = out.replace("}", r"\}")
+    out = out.replace("~", r"\textasciitilde{}")
+    out = out.replace("^", r"\textasciicircum{}")
+    return out
+
+
+def _restore_tokens(text: str, tokens: dict[str, str], key_escaped: bool = False) -> str:
+    """安全恢复占位符，按 key 长度倒序避免 TOKEN1 误替换 TOKEN10。"""
+    out = text
+    for key in sorted(tokens.keys(), key=len, reverse=True):
+        lookup = _escape_latex_text(key) if key_escaped else key
+        out = out.replace(lookup, tokens[key])
+    return out
+
+
+def _inline_markdown_to_latex(text: str) -> str:
+    """将行内 markdown 片段转为 latex。"""
+    if not text:
+        return ""
+    normalized = _normalize_latex_artifacts(text)
+    protected, math_tokens = _protect_math_segments(normalized)
+
+    code_tokens: dict[str, str] = {}
+
+    def _code_repl(match: re.Match) -> str:
+        key = f"@@CODE_{len(code_tokens)}@@"
+        code_tokens[key] = r"\texttt{" + _escape_latex_text(match.group(1)) + "}"
+        return key
+
+    protected = re.sub(r"`([^`]+)`", _code_repl, protected)
+    out = _escape_latex_text(protected)
+    out = _restore_tokens(out, code_tokens, key_escaped=True)
+    out = _restore_tokens(out, math_tokens, key_escaped=True)
+    out = re.sub(r"\*\*([^*]+)\*\*", r"\\textbf{\1}", out)
+    out = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\\emph{\1}", out)
+    return out
+
+
+def _markdown_to_latex(text: str) -> str:
+    """将常见 markdown 结构转为 latex（保留数学公式）。"""
+    src = _normalize_latex_artifacts(_strip_outer_markdown_fence(text))
+    if not src:
+        return ""
+    # 先全段保护数学公式，避免跨行公式在逐行处理中被转义破坏
+    src, global_math_tokens = _protect_math_segments(src)
+
+    lines = src.split("\n")
+    out_lines: list[str] = []
+    list_mode: str | None = None
+    in_code = False
+    code_lines: list[str] = []
+
+    def _close_list():
+        nonlocal list_mode
+        if list_mode == "itemize":
+            out_lines.append(r"\end{itemize}")
+        elif list_mode == "enumerate":
+            out_lines.append(r"\end{enumerate}")
+        list_mode = None
+
+    def _open_list(mode: str):
+        nonlocal list_mode
+        if list_mode == mode:
+            return
+        _close_list()
+        list_mode = mode
+        if mode == "itemize":
+            out_lines.append(r"\begin{itemize}[leftmargin=1.8em,itemsep=2pt]")
+        else:
+            out_lines.append(r"\begin{enumerate}[leftmargin=2.0em,itemsep=2pt]")
+
+    for line in lines:
+        if re.match(r"^\s*```", line):
+            if not in_code:
+                _close_list()
+                in_code = True
+                code_lines = []
+            else:
+                in_code = False
+                out_lines.append(r"\begin{verbatim}")
+                out_lines.extend(code_lines)
+                out_lines.append(r"\end{verbatim}")
+            continue
+
+        if in_code:
+            code_lines.append(line)
+            continue
+
+        if not line.strip():
+            _close_list()
+            out_lines.append("")
+            continue
+
+        m_head = re.match(r"^\s*(#{1,6})\s+(.+?)\s*$", line)
+        if m_head:
+            _close_list()
+            level = len(m_head.group(1))
+            title = _inline_markdown_to_latex(m_head.group(2))
+            if level <= 1:
+                out_lines.append(rf"\subsection*{{{title}}}")
+            elif level == 2:
+                out_lines.append(rf"\subsubsection*{{{title}}}")
+            else:
+                out_lines.append(rf"\paragraph{{{title}}}")
+            continue
+
+        m_ul = re.match(r"^\s*[-*+]\s+(.+?)\s*$", line)
+        if m_ul:
+            _open_list("itemize")
+            out_lines.append(r"\item " + _inline_markdown_to_latex(m_ul.group(1)))
+            continue
+
+        m_ol = re.match(r"^\s*\d+\.\s+(.+?)\s*$", line)
+        if m_ol:
+            _open_list("enumerate")
+            out_lines.append(r"\item " + _inline_markdown_to_latex(m_ol.group(1)))
+            continue
+
+        _close_list()
+        out_lines.append(_inline_markdown_to_latex(line))
+
+    if in_code:
+        out_lines.append(r"\begin{verbatim}")
+        out_lines.extend(code_lines)
+        out_lines.append(r"\end{verbatim}")
+    _close_list()
+    out = "\n".join(out_lines).strip()
+    out = _restore_tokens(out, global_math_tokens, key_escaped=False)
+    return out
+
+
+def _latex_include_graphics(path: Path, width: str = r"0.72\linewidth") -> str:
+    """生成单张图片的 latex 插图语句。"""
+    p = str(path.resolve()).replace("\\", "/")
+    return rf"\includegraphics[width={width}]{{\detokenize{{{p}}}}}"
+
+
+def _render_report_markdown_block(text: str, names: list[str], anonymize: bool) -> str:
+    """报告 markdown 段落渲染（支持匿名 token 防止 *** 被 markdown 吃掉）。"""
+    anon_token = "AUTOGRADERANONMARKER"
+    src = text or ""
+    if anonymize:
+        src = _anonymize_text_with_token(src, names, anon_token)
+    out = _markdown_to_latex(src)
+    if anonymize:
+        out = out.replace(anon_token, "***")
+    return out
+
+
+def _build_reports_tex(
+    reports: list[QuestionReport],
+    questions: list,
+    assignment_name: str,
+    anonymize: bool,
+) -> str:
+    """组装答题报告 latex 源码。"""
+    q_map = {q.qid: q for q in questions}
+    date_text = f"{datetime.now().year}年{datetime.now().month}月{datetime.now().day}日"
+    title_text = assignment_name or "Assignment"
+
+    parts: list[str] = [
+        r"\documentclass[12pt]{article}",
+        r"\usepackage[a4paper,margin=2.2cm]{geometry}",
+        r"\usepackage{fontspec}",
+        r"\usepackage[UTF8,fontset=fandol]{ctex}",
+        r"\usepackage{amsmath,amssymb}",
+        r"\usepackage{graphicx}",
+        r"\usepackage{hyperref}",
+        r"\usepackage{enumitem}",
+        r"\usepackage{titlesec}",
+        r"\usepackage{fancyhdr}",
+        r"\setlength{\parindent}{0pt}",
+        r"\setlength{\parskip}{6pt}",
+        r"\titleformat{\section}{\Large\bfseries}{}{0pt}{}",
+        r"\titleformat{\subsection}{\large\bfseries}{}{0pt}{}",
+        r"\titleformat{\subsubsection}{\normalsize\bfseries}{}{0pt}{}",
+        r"\pagestyle{fancy}",
+        r"\fancyhf{}",
+        r"\chead{}",
+        rf"\rhead{{{_inline_markdown_to_latex(date_text)}}}",
+        r"\lhead{AutoGraderLM}",
+        r"\cfoot{\thepage}",
+        r"\begin{document}",
+        r"\begin{center}",
+        rf"{{\LARGE\bfseries {_inline_markdown_to_latex(title_text)}}}",
+        r"\end{center}",
+        r"\vspace{0.6em}",
+    ]
+
+    if not reports:
+        parts.append("暂无可导出的报告内容。")
+    else:
+        for idx, rpt in enumerate(reports):
+            question = q_map.get(rpt.qid)
+            qidx = rpt.question_index
+            qtitle = f"{rpt.qid}"
+            if qidx is not None:
+                qtitle = f"{rpt.qid}（习题集序号 {qidx}）"
+
+            parts.append(rf"\section*{{{_inline_markdown_to_latex(qtitle)}}}")
+
+            if question and (question.question_text or question.question_images):
+                parts.append(r"\subsection*{题目}")
+                if question.question_text:
+                    parts.append(_markdown_to_latex(question.question_text))
+                if question.question_images:
+                    parts.append(r"\begin{center}")
+                    for img in question.question_images:
+                        abs_img = resolve_assignment_path(img)
+                        if not abs_img.exists():
+                            continue
+                        parts.append(_latex_include_graphics(abs_img))
+                        parts.append(r"\\[0.8em]")
+                    parts.append(r"\end{center}")
+
+            if question and question.rubric:
+                parts.append(r"\subsection*{评分标准}")
+                parts.append(_markdown_to_latex(question.rubric))
+
+            dist = rpt.score_distribution or {}
+            dist_text = "无"
+            if dist:
+                items = sorted(dist.items(), key=lambda x: x[0])
+                dist_text = "；".join(f"{score}分：{count}人" for score, count in items)
+            parts.append(r"\subsection*{得分分布}")
+            parts.append(_inline_markdown_to_latex(dist_text))
+
+            names = list((rpt.student_answers or {}).keys())
+
+            parts.append(r"\subsection*{答题报告}")
+            parts.append(_render_report_markdown_block(rpt.report_text or "", names, anonymize))
+
+            ref_text = rpt.reference_answer or ""
+            if ref_text.strip():
+                parts.append(r"\subsection*{参考作答}")
+                parts.append(_render_report_markdown_block(ref_text, names, anonymize))
+
+            if idx != len(reports) - 1:
+                parts.append(r"\newpage")
+
+    parts.append(r"\end{document}")
+    return "\n".join(parts)
+
+
+def _compile_latex_to_pdf_bytes(tex_content: str) -> bytes:
+    """使用 xelatex 编译 latex 并返回 PDF 字节。"""
+    if not shutil.which("xelatex"):
+        raise RuntimeError("系统未安装 xelatex，无法导出高质量 PDF")
+
+    with tempfile.TemporaryDirectory(prefix="autograder_report_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        tex_path = tmp_path / "report.tex"
+        pdf_path = tmp_path / "report.pdf"
+        tex_path.write_text(tex_content, encoding="utf-8")
+
+        proc = subprocess.run(
+            ["xelatex", "-interaction=nonstopmode", "-halt-on-error", tex_path.name],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0 or not pdf_path.exists():
+            err = (proc.stderr or proc.stdout or "").strip()
+            if len(err) > 2000:
+                err = err[-2000:]
+            raise RuntimeError(f"xelatex 编译失败: {err or 'unknown error'}")
+        return pdf_path.read_bytes()
+
+
+def _build_reports_pdf_bytes(
+    reports: list[QuestionReport],
+    questions: list,
+    anonymize: bool,
+) -> bytes:
+    """构建仅包含答题报告内容的 PDF 二进制（XeLaTeX 渲染）。"""
+    cfg = get_config()
+    tex = _build_reports_tex(reports, questions, cfg.assignment_name, anonymize)
+    return _compile_latex_to_pdf_bytes(tex)
 
 
 def _load_reports_from_disk() -> list[QuestionReport]:
@@ -644,6 +1005,34 @@ def get_reports() -> list:
     if not _reports:
         _reports = _load_reports_from_disk()
     return [r.model_dump() for r in _reports]
+
+
+@router.get("/reports/export-pdf")
+def export_reports_pdf(anonymize: bool = False) -> Response:
+    """导出答题报告 PDF（仅报告内容，学生姓名统一匿名为 ***）。"""
+    global _reports
+    if not _reports:
+        _reports = _load_reports_from_disk()
+    if not _reports:
+        return Response(
+            content=json.dumps({"error": "暂无报告可导出，请先生成报告"}, ensure_ascii=False),
+            status_code=400,
+            media_type="application/json",
+        )
+
+    try:
+        questions = load_all_questions()
+        pdf_bytes = _build_reports_pdf_bytes(_reports, questions, anonymize=anonymize)
+    except Exception as e:
+        logger.exception("Export reports PDF failed")
+        return Response(
+            content=json.dumps({"error": f"导出 PDF 失败：{e}"}, ensure_ascii=False),
+            status_code=500,
+            media_type="application/json",
+        )
+
+    headers = {"Content-Disposition": 'attachment; filename="report.pdf"'}
+    return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
 
 
 @router.post("/cancel")
