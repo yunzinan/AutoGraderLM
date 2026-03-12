@@ -381,10 +381,17 @@
           </div>
 
           <div class="panel p-5 mt-4">
-            <h3 class="text-base font-bold text-slate-900">人工重新切分</h3>
-            <p class="mt-2 text-sm leading-6 text-slate-600">
-              选择一份已切分的作业，在 for_llm 页面上调整每道题的框选区域（可拖动、新增、删除框），保存后将更新该作业的 segment 并重新生成答案图。
-            </p>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 class="text-base font-bold text-slate-900">人工重新切分</h3>
+                <p class="mt-2 text-sm leading-6 text-slate-600">
+                  选择一份已切分的作业，在 for_llm 页面上调整每道题的框选区域（可拖动、新增、删除框），保存后将更新该作业的 segment 并重新生成答案图。
+                </p>
+              </div>
+              <button v-if="fromReviewStem" type="button" class="btn btn-primary shrink-0" @click="goBackToReview" title="返回人工复核并刷新该题截图">
+                回到人工复核
+              </button>
+            </div>
             <div class="mt-4 flex flex-wrap items-center gap-3">
               <label class="form-label mb-0">选择作业</label>
               <select
@@ -613,7 +620,7 @@
             </div>
             <div class="mb-3 flex flex-wrap gap-2">
               <div v-for="img in reviewTargetItem.answer" :key="img" class="relative inline-block group">
-                <img :src="'/files/' + img" class="max-h-44 rounded-lg border border-slate-200 bg-white p-1" />
+                <img :src="'/files/' + img + (reviewAnswerImageBuster ? '?t=' + reviewAnswerImageBuster : '')" class="max-h-44 rounded-lg border border-slate-200 bg-white p-1" />
                 <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
                 </button>
@@ -637,7 +644,11 @@
                 <textarea class="input min-h-[100px] resize-y" rows="4" v-model="reviewTargetItem.comments" placeholder="可多行填写评语"></textarea>
               </div>
             </div>
-            <div class="mt-4 flex justify-end gap-2">
+            <div class="mt-4 flex justify-end gap-2 flex-wrap">
+              <button type="button" class="btn btn-secondary" @click="goToResegmentFor(reviewTargetItem.filename, reviewTargetItem.qid)" title="跳转到人工切分界面并加载该作业">重新切分</button>
+              <button type="button" class="btn btn-secondary" @click="regradeQuestion(reviewTargetItem.filename, reviewTargetItem.qid)" :disabled="regradingQid === reviewTargetItem.qid" title="对该题重新 AI 评阅">
+                {{ regradingQid === reviewTargetItem.qid ? '评阅中…' : 'AI重新评阅' }}
+              </button>
               <button type="button" class="btn btn-secondary" @click="reviewTargetItem = null; reviewTargetStem = ''; reviewTargetQid = ''">关闭</button>
               <button class="btn btn-success" @click="submitReviewAndClearTarget(reviewTargetItem)">提交复核</button>
             </div>
@@ -688,7 +699,7 @@
 
             <div class="mb-3 flex flex-wrap gap-2">
               <div v-for="img in item.answer" :key="img" class="relative inline-block group">
-                <img :src="'/files/' + img" class="max-h-44 rounded-lg border border-slate-200 bg-white p-1" />
+                <img :src="'/files/' + img + (reviewAnswerImageBuster ? '?t=' + reviewAnswerImageBuster : '')" class="max-h-44 rounded-lg border border-slate-200 bg-white p-1" />
                 <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
                 </button>
@@ -712,7 +723,11 @@
                 <textarea class="input min-h-[100px] resize-y" rows="4" v-model="item.comments" placeholder="可多行填写评语"></textarea>
               </div>
             </div>
-            <div class="mt-4 flex justify-end">
+            <div class="mt-4 flex justify-end gap-2 flex-wrap">
+              <button type="button" class="btn btn-secondary" @click="goToResegmentFor(item.filename, item.qid)" title="跳转到人工切分界面并加载该作业">重新切分</button>
+              <button type="button" class="btn btn-secondary" @click="regradeQuestion(item.filename, item.qid)" :disabled="regradingQid === item.qid" title="对该题重新 AI 评阅">
+                {{ regradingQid === item.qid ? '评阅中…' : 'AI重新评阅' }}
+              </button>
               <button class="btn btn-success" @click="submitReview(item)">提交复核</button>
             </div>
           </div>
@@ -920,6 +935,9 @@ createApp({
     const reviewTargetQid = ref('');
     const reviewTargetItem = ref(null);
     const regradingQid = ref('');
+    const fromReviewStem = ref('');
+    const fromReviewQid = ref('');
+    const reviewAnswerImageBuster = ref(0);
     const studentList = ref([]);
     const selectedStudent = ref('');
     const studentResultLoading = ref(false);
@@ -1034,8 +1052,9 @@ createApp({
       loadStudentResult();
     }
 
-    async function regradeQuestion(stem, qid) {
-      if (!stem || !qid) return;
+    async function regradeQuestion(filenameOrStem, qid) {
+      if (!filenameOrStem || !qid) return;
+      const stem = String(filenameOrStem).replace(/\.pdf$/i, '');
       regradingQid.value = qid;
       try {
         const res = await api(`/api/pipeline/regrade/${encodeURIComponent(stem)}/${encodeURIComponent(qid)}`, { method: 'POST' });
@@ -1048,6 +1067,11 @@ createApp({
         await loadRoster();
         await loadSummary();
         await loadReviewItems();
+        const currentStem = (reviewTargetStem.value || '').replace(/\.pdf$/i, '');
+        if (currentStem === stem && reviewTargetQid.value === qid) {
+          const data = await api(`/api/review/item/${encodeURIComponent(stem)}/${encodeURIComponent(qid)}`);
+          if (!data.error) reviewTargetItem.value = data;
+        }
       } catch (e) {
         showToast(e?.message || '重新评阅请求失败', 'error');
       } finally {
@@ -1068,6 +1092,25 @@ createApp({
       } catch (e) {
         showToast('加载复核项失败', 'error');
       }
+    }
+
+    function goToResegmentFor(filenameOrStem, qid) {
+      if (!filenameOrStem || !qid) return;
+      const stem = String(filenameOrStem).replace(/\.pdf$/i, '');
+      fromReviewStem.value = stem;
+      fromReviewQid.value = qid;
+      page.value = 'segment';
+    }
+
+    async function goBackToReview() {
+      const stem = fromReviewStem.value;
+      const qid = fromReviewQid.value;
+      if (!stem || !qid) return;
+      fromReviewStem.value = '';
+      fromReviewQid.value = '';
+      reviewAnswerImageBuster.value = Date.now();
+      page.value = 'review';
+      await goToReviewFor(stem, qid);
     }
 
     const api = async (path, opts) => {
@@ -1635,7 +1678,13 @@ createApp({
       }
       if (p === 'report') await loadReports();
       if (p === 'config') await loadQuestions();
-      if (p === 'segment') await loadSegmentEditorAssignments();
+      if (p === 'segment') {
+        await loadSegmentEditorAssignments();
+        if (fromReviewStem.value) {
+          segmentEditorSelected.value = fromReviewStem.value;
+          await loadSegmentEditorAssignment();
+        }
+      }
     });
 
     function onSegmentEditorKeydown(ev) {
@@ -1695,6 +1744,11 @@ createApp({
       reviewTargetStem,
       reviewTargetQid,
       regradingQid,
+      fromReviewStem,
+      fromReviewQid,
+      reviewAnswerImageBuster,
+      goToResegmentFor,
+      goBackToReview,
       studentList,
       selectedStudent,
       studentResultLoading,

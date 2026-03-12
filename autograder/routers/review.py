@@ -2,32 +2,64 @@
 
 from __future__ import annotations
 
+import unicodedata
 from pathlib import Path
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from autograder.config import get_results_dir, to_relative_url_path
-from autograder.models import GradingRecord, StudentResult, _now_iso
+from autograder.config import get_answers_dir, get_results_dir
+from autograder.models import StudentResult, _now_iso
 from autograder.pipeline.grading import load_all_results, load_student_result
 
 router = APIRouter(prefix="/api/review", tags=["review"])
 
 
+def _normalize_stem(s: str) -> str:
+    """去掉 .pdf 后缀，与 results 文件名一致。"""
+    return s.removesuffix(".pdf") if s.endswith(".pdf") else s
+
+
+def _resolve_stem_dir(stem: str) -> Path | None:
+    """解析 stem 对应的 answers 下实际目录（与 pipeline 一致，处理 Unicode 等）。"""
+    stem = _normalize_stem(stem)
+    answers_dir = get_answers_dir()
+    if not answers_dir.exists():
+        return None
+    stem_nfc = unicodedata.normalize("NFC", stem)
+    for d in answers_dir.iterdir():
+        if d.is_dir() and not d.name.startswith("_") and unicodedata.normalize("NFC", d.name) == stem_nfc:
+            return d
+    return answers_dir / stem if (answers_dir / stem).exists() else None
+
+
+def _get_answer_paths_from_disk(stem: str, qid: str) -> list[str]:
+    """从磁盘 answers/{stem}/ 读取该题当前作答图片路径（持久化文件），不依赖 results JSON。
+    人工重新切分后或服务重启后仍能显示最新切分结果。"""
+    stem_dir = _resolve_stem_dir(stem)
+    if not stem_dir or not stem_dir.is_dir():
+        return []
+    files = sorted(stem_dir.glob(f"{qid}-*.png"), key=lambda f: f.name)
+    return [f"answers/{stem_dir.name}/{f.name}" for f in files]
+
+
 @router.get("/item/{filename_stem}/{qid}")
 def get_review_item(filename_stem: str, qid: str) -> dict:
-    """获取指定学生指定题目的评阅记录，用于人工复核（不论置信度）。"""
+    """获取指定学生指定题目的评阅记录，用于人工复核（不论置信度）。
+    作答图片路径始终从磁盘 answers 目录读取，保证人工重新切分后、服务重启后仍为最新。"""
+    filename_stem = _normalize_stem(filename_stem)
     sr = load_student_result(filename_stem)
     if not sr:
         return {"error": "未找到该学生的评阅结果"}
     for r in sr.records:
         if r.qid == qid:
+            answer_paths = _get_answer_paths_from_disk(filename_stem, qid)
             return {
                 "filename": sr.filename,
                 "student_id": sr.student_id,
                 "student_name": sr.student_name,
                 "qid": r.qid,
-                "answer": [to_relative_url_path(p) for p in (r.answer or [])],
+                "answer": answer_paths,
                 "grader": r.grader,
                 "graded_at": r.graded_at,
                 "score": r.score,
@@ -40,18 +72,22 @@ def get_review_item(filename_stem: str, qid: str) -> dict:
 
 @router.get("")
 def get_review_items() -> list[dict]:
-    """Return all grading records with confidence <= 2, grouped for review."""
+    """Return all grading records with confidence <= 2, grouped for review.
+    作答图片路径从磁盘 answers 目录读取，与 get_review_item 一致。"""
     results = load_all_results()
     items = []
+    stem_norm = _normalize_stem
     for sr in results:
+        file_stem = stem_norm(Path(sr.filename).stem)
         for r in sr.records:
             if r.confidence <= 2:
+                answer_paths = _get_answer_paths_from_disk(file_stem, r.qid)
                 items.append({
                     "filename": sr.filename,
                     "student_id": sr.student_id,
                     "student_name": sr.student_name,
                     "qid": r.qid,
-                    "answer": [to_relative_url_path(p) for p in (r.answer or [])],
+                    "answer": answer_paths,
                     "grader": r.grader,
                     "graded_at": r.graded_at,
                     "score": r.score,
@@ -72,6 +108,7 @@ class ReviewUpdate(BaseModel):
 @router.put("/{filename_stem}/{qid}")
 def update_review(filename_stem: str, qid: str, body: ReviewUpdate) -> dict:
     """Teacher manually updates a grading record."""
+    filename_stem = _normalize_stem(filename_stem)
     path = get_results_dir() / f"{filename_stem}.json"
     if not path.exists():
         return {"error": "结果文件不存在"}

@@ -287,8 +287,9 @@ def segment_editor_list_assignments() -> list:
 
 
 def _resolve_stem_for_answers(stem: str) -> str | None:
-    """解析 stem 对应的 answers 下实际目录名（处理 Unicode 规范化差异）。"""
+    """解析 stem 对应的 answers 下实际目录名（处理 Unicode 规范化差异、.pdf 后缀）。"""
     import unicodedata
+    stem = stem.removesuffix(".pdf") if stem.endswith(".pdf") else stem
     answers_dir = get_answers_dir()
     if not answers_dir.exists():
         return None
@@ -408,6 +409,7 @@ async def cancel_pipeline() -> dict:
 @router.post("/regrade/{stem}/{qid}")
 async def regrade_single(stem: str, qid: str) -> dict:
     """对指定学生的指定题目进行 AI 重新评阅。"""
+    stem = stem.removesuffix(".pdf") if stem.endswith(".pdf") else stem
     global _answer_map
     if not _answer_map:
         _answer_map = _build_answer_map_from_disk()
