@@ -182,6 +182,18 @@
     .prose hr { border: none; border-top: 1px solid #e2e8f0; margin: 1em 0; }
     .prose a { color: #4f46e5; text-decoration: underline; }
     .prose a:hover { color: #4338ca; }
+    .student-name-link {
+      text-decoration: underline;
+      text-decoration-color: #6366f1;
+      text-decoration-thickness: 2px;
+      text-underline-offset: 2px;
+      cursor: pointer;
+      transition: background 0.15s;
+      border-radius: 2px;
+    }
+    .student-name-link:hover {
+      background: #eef2ff;
+    }
     @keyframes spin { to { transform: rotate(360deg); } }
     .animate-spin { animation: spin 0.9s linear infinite; }
   </style>
@@ -198,6 +210,26 @@
       <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
     </button>
     <img :src="fullscreenImageUrl" class="max-w-[95vw] max-h-[95vh] object-contain rounded-lg shadow-2xl" @click.stop />
+  </div>
+  <!-- 学生作答弹出面板 -->
+  <div v-if="studentPopup.visible" class="fixed inset-0 z-[65] flex items-center justify-center bg-black/50 p-4" @click.self="closeStudentPopup">
+    <div class="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white shadow-2xl" @click.stop>
+      <div class="sticky top-0 z-10 flex items-center justify-between rounded-t-2xl border-b border-slate-200 bg-white px-5 py-3">
+        <h4 class="text-base font-bold text-slate-900">{{ maskSensitive(studentPopup.name) }} 的作答</h4>
+        <button type="button" class="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600" @click="closeStudentPopup">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+      </div>
+      <div class="space-y-3 p-5">
+        <div v-for="(img, idx) in studentPopup.images" :key="idx" class="relative group">
+          <img :src="'/files/' + img" class="w-full rounded-lg border border-slate-200 bg-white p-1" />
+          <button type="button" class="absolute top-2 right-2 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+          </button>
+        </div>
+        <p v-if="!studentPopup.images.length" class="py-6 text-center text-sm text-slate-400">暂无作答图片</p>
+      </div>
+    </div>
   </div>
   <!-- 生成报告中全局提示条：不阻塞其他操作，始终可见 -->
   <div v-if="isReportBusy" class="fixed top-0 left-0 right-0 z-50 flex items-center gap-3 bg-brand-600 px-4 py-3 text-white shadow-lg">
@@ -1055,6 +1087,23 @@
           </div>
           <div v-for="rpt in reports" :key="rpt.qid" class="panel p-4 lg:p-5">
             <h4 class="mb-4 text-base font-bold text-slate-900">{{ rpt.qid }}{{ rpt.question_index != null ? '（习题集序号 ' + rpt.question_index + '）' : '' }} 答题报告</h4>
+            <!-- 题目信息：题干、题目图、评分标准 -->
+            <div v-if="getQuestionByQid(rpt.qid)" class="mb-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+              <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">题目信息</p>
+              <p v-if="getQuestionByQid(rpt.qid).question_text" class="mb-2 text-sm text-slate-700">{{ getQuestionByQid(rpt.qid).question_text }}</p>
+              <div class="mb-2 flex flex-wrap gap-2">
+                <div v-for="img in getQuestionByQid(rpt.qid).question_images" :key="img" class="relative inline-block group">
+                  <img :src="'/files/' + img" class="max-h-32 rounded-lg border border-slate-200 bg-white p-1" />
+                  <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
+                  </button>
+                </div>
+              </div>
+              <div v-if="getQuestionByQid(rpt.qid).rubric" class="mt-2 rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700">
+                <p class="mb-1 text-xs font-semibold text-slate-500">评分标准</p>
+                <p class="whitespace-pre-wrap">{{ getQuestionByQid(rpt.qid).rubric }}</p>
+              </div>
+            </div>
             <div class="mb-4 rounded-xl bg-slate-50 p-4">
               <p class="mb-3 text-sm font-semibold text-slate-700">得分分布</p>
               <div class="flex h-32 items-end gap-2">
@@ -1065,7 +1114,7 @@
                 </div>
               </div>
             </div>
-            <div class="prose max-w-none text-sm text-slate-700" v-html="renderMd(rpt.report_text)"></div>
+            <div class="prose max-w-none text-sm text-slate-700" v-html="renderReportMd(rpt.report_text, rpt.student_answers)" @click="onReportClick($event, rpt.student_answers)"></div>
           </div>
         </section>
       </main>
@@ -1762,6 +1811,42 @@ createApp({
       }
     }
 
+    function renderReportMd(text, studentAnswers) {
+      let html = renderMd(text);
+      if (!studentAnswers || !Object.keys(studentAnswers).length) return html;
+      const names = Object.keys(studentAnswers).sort((a, b) => b.length - a.length);
+      const escaped = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      const pattern = new RegExp(`(${escaped.join('|')})`, 'g');
+      const anon = anonymousMode.value;
+      return html.replace(/(<[^>]+>)|([^<]+)/g, (match, tag, text) => {
+        if (tag) return tag;
+        return text.replace(pattern, (m) => {
+          const display = anon ? '***' : m;
+          return '<span class="student-name-link" data-student="' + m.replace(/"/g, '&quot;') + '">' + display + '</span>';
+        });
+      });
+    }
+
+    const studentPopup = reactive({ visible: false, name: '', images: [] });
+
+    function onReportClick(event, studentAnswers) {
+      const el = event.target.closest('.student-name-link');
+      if (!el) return;
+      const name = el.getAttribute('data-student');
+      if (!name || !studentAnswers) return;
+      const imgs = studentAnswers[name];
+      if (!imgs) return;
+      studentPopup.name = name;
+      studentPopup.images = imgs;
+      studentPopup.visible = true;
+    }
+
+    function closeStudentPopup() {
+      studentPopup.visible = false;
+      studentPopup.name = '';
+      studentPopup.images = [];
+    }
+
     function maxDistCount(rpt) {
       const vals = Object.values(rpt.score_distribution || {});
       return Math.max(1, ...vals);
@@ -2228,6 +2313,10 @@ createApp({
       formatGradedAt,
       getQuestionByQid,
       renderMd,
+      renderReportMd,
+      studentPopup,
+      onReportClick,
+      closeStudentPopup,
       maxDistCount,
       segmentEditorAssignments,
       segmentEditorSelected,

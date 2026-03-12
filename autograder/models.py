@@ -111,3 +111,7 @@ class QuestionReport(BaseModel):
     question_index: Optional[int] = None
     score_distribution: dict[int, int] = Field(default_factory=dict)
     report_text: str = ""
+    student_answers: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="学生姓名 → 该题作答图片路径列表，供前端 auto-link 弹出作答图片",
+    )

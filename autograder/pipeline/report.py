@@ -8,7 +8,7 @@ from pathlib import Path
 
 from jinja2 import Template
 
-from autograder.config import AppConfig
+from autograder.config import AppConfig, to_relative_url_path
 from autograder.excel_utils import export_graded_xlsx, read_student_roster
 from autograder.llm import build_llm, invoke_with_log
 from autograder.models import (
@@ -57,45 +57,71 @@ def compute_score_distribution(
     return dict(sorted(dist.items()))
 
 
+def _collect_question_data(
+    question: QuestionConfig,
+    results: list[StudentResult],
+) -> tuple[list[dict], dict[str, list[str]], dict[int, int]]:
+    """Collect enriched records, student_answers mapping, and score distribution for a question."""
+    qid = question.qid
+    name_map: dict[str, str] = {sr.filename: (sr.student_name or sr.filename) for sr in results}
+
+    enriched: list[dict] = []
+    student_answers: dict[str, list[str]] = {}
+    for sr in results:
+        for r in sr.records:
+            if r.qid != qid:
+                continue
+            d = r.model_dump()
+            sname = name_map.get(r.filename, r.filename)
+            d["student_name"] = sname
+            enriched.append(d)
+            student_answers[sname] = [to_relative_url_path(p) for p in r.answer]
+
+    score_dist = compute_score_distribution(results, qid)
+    return enriched, student_answers, score_dist
+
+
+def _render_and_call_llm(
+    cfg: AppConfig,
+    question: QuestionConfig,
+    enriched_results: list[dict],
+    score_dist: dict[int, int],
+) -> str:
+    """Render prompt from template and call LLM, return response text."""
+    report_cfg = cfg.assignment_report
+    tpl = Template(Path(report_cfg.llm.prompt_template).read_text(encoding="utf-8"))
+    prompt_text = tpl.render(
+        qid=question.qid,
+        max_score=question.score,
+        question_text=question.question_text,
+        rubric=question.rubric,
+        score_distribution=score_dist,
+        results=enriched_results,
+    )
+    llm = build_llm(report_cfg.llm)
+    from langchain_core.messages import HumanMessage
+
+    llm_bounded = llm.bind(max_tokens=2048)
+    msg = HumanMessage(content=prompt_text)
+    resp = invoke_with_log(llm_bounded, [msg], {"stage": "report", "qid": question.qid})
+    return resp.content
+
+
 async def generate_question_report(
     cfg: AppConfig,
     question: QuestionConfig,
     results: list[StudentResult],
 ) -> QuestionReport:
     """Generate an LLM-powered per-question analysis report."""
-    qid = question.qid
-    records_for_q: list[GradingRecord] = []
-    for sr in results:
-        for r in sr.records:
-            if r.qid == qid:
-                records_for_q.append(r)
-
-    score_dist = compute_score_distribution(results, qid)
-
-    report_cfg = cfg.assignment_report
-    tpl = Template(Path(report_cfg.llm.prompt_template).read_text(encoding="utf-8"))
-    prompt_text = tpl.render(
-        qid=qid,
-        max_score=question.score,
-        question_text=question.question_text,
-        rubric=question.rubric,
-        score_distribution=score_dist,
-        results=[r.model_dump() for r in records_for_q],
-    )
-
-    llm = build_llm(report_cfg.llm)
-    from langchain_core.messages import HumanMessage
-
-    # 限制报告生成长度，避免回复过长（约 500 字对应 ~700 tokens，留余量）
-    llm_bounded = llm.bind(max_tokens=1024)
-    msg = HumanMessage(content=prompt_text)
-    resp = invoke_with_log(llm_bounded, [msg], {"stage": "report", "qid": qid})
+    enriched, student_answers, score_dist = _collect_question_data(question, results)
+    report_text = _render_and_call_llm(cfg, question, enriched, score_dist)
 
     return QuestionReport(
-        qid=qid,
+        qid=question.qid,
         question_index=getattr(question, "question_index", None),
         score_distribution=score_dist,
-        report_text=resp.content,
+        report_text=report_text,
+        student_answers=student_answers,
     )
 
 
@@ -105,37 +131,15 @@ def _generate_question_report_sync(
     results: list[StudentResult],
 ) -> QuestionReport:
     """同步生成单题报告，供线程池调用，不阻塞事件循环。"""
-    qid = question.qid
-    records_for_q: list[GradingRecord] = []
-    for sr in results:
-        for r in sr.records:
-            if r.qid == qid:
-                records_for_q.append(r)
-
-    score_dist = compute_score_distribution(results, qid)
-    report_cfg = cfg.assignment_report
-    tpl = Template(Path(report_cfg.llm.prompt_template).read_text(encoding="utf-8"))
-    prompt_text = tpl.render(
-        qid=qid,
-        max_score=question.score,
-        question_text=question.question_text,
-        rubric=question.rubric,
-        score_distribution=score_dist,
-        results=[r.model_dump() for r in records_for_q],
-    )
-
-    llm = build_llm(report_cfg.llm)
-    from langchain_core.messages import HumanMessage
-
-    llm_bounded = llm.bind(max_tokens=1024)
-    msg = HumanMessage(content=prompt_text)
-    resp = invoke_with_log(llm_bounded, [msg], {"stage": "report", "qid": qid})
+    enriched, student_answers, score_dist = _collect_question_data(question, results)
+    report_text = _render_and_call_llm(cfg, question, enriched, score_dist)
 
     return QuestionReport(
-        qid=qid,
+        qid=question.qid,
         question_index=getattr(question, "question_index", None),
         score_distribution=score_dist,
-        report_text=resp.content,
+        report_text=report_text,
+        student_answers=student_answers,
     )
 
 
