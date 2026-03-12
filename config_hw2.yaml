@@ -15,7 +15,8 @@ assignment_segmentation:
   num_workers: 5
   max_retry: 3
   llm: 
-    model: "gpt-5"
+    model: "gpt-5.2-chat-latest"
+    endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/segmentation.jinja"
   
 
