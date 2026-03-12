@@ -951,18 +951,19 @@
             <div class="grid gap-6 items-center lg:grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)]">
               <div>
                 <p class="mb-2 text-xs font-semibold text-slate-500">总分柱状图</p>
-                <div class="flex h-40 items-end gap-1.5 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                <!-- 顶部留出固定空间 + 限制柱子最大高度，保证最高柱（如100分）顶上的数字不被裁切，且柱子始终可见 -->
+                <div class="flex h-40 items-end gap-1.5 overflow-x-auto overflow-y-visible rounded-xl border border-slate-200 bg-slate-50 px-3 pt-6 pb-3">
                   <div
-                    v-for="item in scoreBarItems"
-                    :key="item.score"
+                    v-for="item in scoreBarItemsDisplay"
+                    :key="item.scoreLabel.startsWith('≤') ? 'leq-' + item.score : item.score"
                     class="flex min-w-[18px] flex-1 flex-col items-center"
                   >
-                    <span class="mb-1 text-[10px] text-slate-500">{{ item.count }}</span>
+                    <span class="mb-1 flex-shrink-0 text-[10px] text-slate-500" :title="'人数: ' + item.count">{{ item.count }}</span>
                     <div
-                      class="w-full max-w-[26px] rounded-t-md bg-gradient-to-b from-brand-400 to-brand-600"
-                      :style="{ height: (item.count / maxScoreBarCount * 120) + 'px' }"
+                      class="w-full max-w-[26px] flex-shrink-0 rounded-t-md bg-gradient-to-b from-brand-400 to-brand-600"
+                      :style="{ height: (maxScoreBarCount > 0 ? Math.max(0, (item.count / maxScoreBarCount) * 96) : 0) + 'px', minHeight: item.count > 0 ? '4px' : '0' }"
                     ></div>
-                    <span class="mt-1 text-[10px] text-slate-500">{{ item.score }}</span>
+                    <span class="mt-1 flex-shrink-0 text-[10px] text-slate-500">{{ item.scoreLabel }}</span>
                   </div>
                 </div>
               </div>
@@ -970,10 +971,26 @@
               <div>
                 <p class="mb-2 text-xs font-semibold text-slate-500">分数段扇形图</p>
                 <div class="flex items-center gap-4">
-                  <div
-                    class="h-32 w-32 rounded-full border border-slate-200 bg-slate-100"
-                    :style="scoreBucketPieStyle"
-                  ></div>
+                  <div class="relative h-32 w-32 flex-shrink-0 rounded-full border border-slate-200 bg-slate-100 overflow-hidden">
+                    <svg class="h-full w-full" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                      <circle v-if="!scoreBucketPieSlices.length" cx="50" cy="50" r="50" fill="#e5e7eb" />
+                      <path
+                        v-for="(slice, idx) in scoreBucketPieSlices"
+                        :key="idx"
+                        :d="slice.path"
+                        :fill="slice.color"
+                        class="cursor-pointer transition-opacity hover:opacity-90"
+                        @mouseenter="pieTooltipSlice = slice"
+                        @mouseleave="pieTooltipSlice = null"
+                      />
+                    </svg>
+                    <div
+                      v-if="pieTooltipSlice"
+                      class="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-center text-xs font-medium text-slate-700 shadow-md"
+                    >
+                      {{ pieTooltipSlice.label }}：{{ pieTooltipSlice.percentage }}%<br><span class="text-slate-500">({{ pieTooltipSlice.count }} 人)</span>
+                    </div>
+                  </div>
                   <div class="space-y-1.5 text-xs text-slate-600">
                     <div
                       v-for="(bucket, idx) in scoreBuckets"
@@ -1246,8 +1263,33 @@ createApp({
         .filter(item => !Number.isNaN(item.score))
         .sort((a, b) => a.score - b.score);
     });
+    /** 柱状图展示用：低分保护，合并后占比>=20%的低分段为一根柱子（≤T），其余单分一柱 */
+    const LOW_SCORE_PCT = 0.2;
+    const scoreBarItemsDisplay = computed(() => {
+      const items = scoreBarItems.value;
+      if (!items.length) return [];
+      const total = items.reduce((s, i) => s + i.count, 0);
+      if (total <= 0) return items.map(i => ({ scoreLabel: String(i.score), score: i.score, count: i.count }));
+      const lowTarget = total * LOW_SCORE_PCT;
+      let acc = 0;
+      let thresholdIdx = -1;
+      for (let i = 0; i < items.length; i++) {
+        acc += items[i].count;
+        if (acc >= lowTarget) {
+          thresholdIdx = i;
+          break;
+        }
+      }
+      if (thresholdIdx < 0) thresholdIdx = items.length - 1;
+      const lowCount = items.slice(0, thresholdIdx + 1).reduce((s, i) => s + i.count, 0);
+      const thresholdScore = items[thresholdIdx].score;
+      const merged = [{ scoreLabel: '≤' + thresholdScore, score: thresholdScore, count: lowCount }];
+      const rest = items.slice(thresholdIdx + 1).map(i => ({ scoreLabel: String(i.score), score: i.score, count: i.count }));
+      return [...merged, ...rest];
+    });
     const maxScoreBarCount = computed(() => {
-      return scoreBarItems.value.reduce((max, item) => Math.max(max, item.count), 0) || 1;
+      const list = scoreBarItemsDisplay.value.length ? scoreBarItemsDisplay.value : scoreBarItems.value;
+      return list.reduce((max, item) => Math.max(max, item.count), 0) || 1;
     });
     const scoreBucketColors = ['#4f46e5', '#0ea5e9', '#22c55e', '#eab308', '#f97316'];
     const scoreBuckets = computed(() => {
@@ -1293,6 +1335,42 @@ createApp({
       }
       return { background: `conic-gradient(${parts.join(',')})` };
     });
+    // SVG 扇形图每段数据（预计算 path/百分比，仅依赖 scoreBuckets 变更时重算）
+    const PI2 = Math.PI * 2;
+    const HALF_PI = Math.PI / 2;
+    const scoreBucketPieSlices = computed(() => {
+      const buckets = scoreBuckets.value;
+      const total = scoreBucketTotal.value || 1;
+      if (!total) return [];
+      const out = [];
+      let acc = 0;
+      const cx = 50, cy = 50, r = 50;
+      for (let idx = 0; idx < buckets.length; idx++) {
+        const b = buckets[idx];
+        if (!b.count) continue;
+        const startPct = (acc / total) * 100;
+        acc += b.count;
+        const endPct = (acc / total) * 100;
+        const pct = Math.round((b.count / total) * 1000) / 10;
+        const color = scoreBucketColors[idx % scoreBucketColors.length];
+        const startAngle = (startPct / 100) * PI2 - HALF_PI;
+        const endAngle = (endPct / 100) * PI2 - HALF_PI;
+        const x1 = cx + r * Math.cos(startAngle);
+        const y1 = cy + r * Math.sin(startAngle);
+        const x2 = cx + r * Math.cos(endAngle);
+        const y2 = cy + r * Math.sin(endAngle);
+        const large = (endPct - startPct) > 50 ? 1 : 0;
+        out.push({
+          path: `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`,
+          color,
+          label: b.label,
+          count: b.count,
+          percentage: pct
+        });
+      }
+      return out;
+    });
+    const pieTooltipSlice = ref(null);
     const hasScoreData = computed(() => {
       return !!scoreField.value && scoreBarItems.value.length > 0;
     });
@@ -2117,10 +2195,13 @@ createApp({
       rosterSortOrder,
       scoreField,
       scoreBarItems,
+      scoreBarItemsDisplay,
       maxScoreBarCount,
       scoreBuckets,
       scoreBucketColors,
       scoreBucketPieStyle,
+      scoreBucketPieSlices,
+      pieTooltipSlice,
       hasScoreData,
       setRosterSort,
       goToStudentResult,
