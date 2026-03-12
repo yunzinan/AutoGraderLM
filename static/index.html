@@ -1814,35 +1814,73 @@ createApp({
 
     function preprocessLatex(text) {
       let s = String(text || '');
-      // 0. 移除单独成行的 \ 或 " \"（LLM 常在公式间输出）
+      // 仅做保守归一化，避免误伤本来正确的 LaTeX
+      s = s.replace(/\r\n/g, '\n');
+      // 移除单独成行的反斜杠（常见于 LLM 误输出）
       s = s.replace(/\n\s*\\\s*\n/g, '\n\n');
-      // 1. 矩阵行末单反斜杠 \ 改为 \\（LaTeX 要求）；排除 \\ 换行（已是正确换行符）
-      s = s.replace(/(?<!\\)\\([\s]*)\n/g, '\\\\$1\n');
-      // 2. 修正 LLM 常见输出：\$$ → $$，\\\ → \\，\\] → \]、\\) → \)（公式结尾）
-      s = s.replace(/\\\$\$/g, '$$');
-      s = s.replace(/\\\\\\\s*/g, '\\\\');
-      // 2a. \\] 后跟空格+反斜杠：统一替换为 \]（支持 \\] \、\\]  \、\\] \\ 等）
-      s = s.replace(/\\\\\\]\s*\\+\s*(?=\s|$)/g, '\\]');
-      s = s.replace(/\\\\\\]\s*\\+\s*\n/g, '\\]\n');
-      s = s.replace(/\\\\\\]\s*\\+\s*(?=\s*\\\[)/g, '\\] ');
-      s = s.replace(/\\\\\\]\s*\\+\s*$/gm, '\\]');
+      // 规范块级公式结尾：\\] / \\] \ -> \]
+      s = s.replace(/\\\\\]\s*\\+\s*(?=\s|$)/g, '\\]');
       s = s.replace(/\\\\\](?=\s*\n|\s*$)/g, '\\]');
+      // 规范行内公式结尾：\\) -> \)
       s = s.replace(/\\\\\)/g, '\\)');
-      // 3. 将 [ \n ... \n ] 包裹的 LaTeX 块转为 $$ ... $$
-      s = s.replace(/\[\s*\n([\s\S]*?)\n\s*\]/g, (m, inner) => {
-        if (/\\begin\{|\\end\{|\\frac|\\sqrt|\\sum|\\int|\\left|\\right|\\quad|\\pmatrix|\\matrix/.test(inner)) {
-          return '$$\n' + inner + '\n$$';
-        }
-        return m;
-      });
-      // 4. 单行 [ ... ] 内若含 LaTeX 也转换
-      s = s.replace(/\[\s*([\s\S]*?)\s*\]/g, (m, inner) => {
-        if (/\\begin\{|\\end\{|\\frac|\\sqrt|\\quad|\\pmatrix/.test(inner)) {
-          return '$$' + inner + '$$';
-        }
-        return m;
-      });
+      // 修正 \$$ -> $$
+      s = s.replace(/\\\$\$/g, '$$');
       return s;
+    }
+
+    function renderKatexFragment(content, displayMode) {
+      const katexObj = (typeof katex !== 'undefined' ? katex : (window && window.katex));
+      if (!katexObj || typeof katexObj.renderToString !== 'function') {
+        return displayMode ? ('\\[' + content + '\\]') : ('\\(' + content + '\\)');
+      }
+      try {
+        return katexObj.renderToString(content, {
+          displayMode,
+          throwOnError: false,
+          strict: 'warn',
+          trust: false
+        });
+      } catch {
+        return displayMode ? ('\\[' + content + '\\]') : ('\\(' + content + '\\)');
+      }
+    }
+
+    function protectMathSegments(raw) {
+      const mathTokens = [];
+      const codeTokens = [];
+
+      const toMathToken = (content, display) => {
+        const i = mathTokens.length;
+        mathTokens.push({ content, display });
+        return '@@MATH' + i + '@@';
+      };
+      const toCodeToken = (content) => {
+        const i = codeTokens.length;
+        codeTokens.push(content);
+        return '@@CODE' + i + '@@';
+      };
+
+      // 先保护代码块与行内代码，避免误识别其中的 $
+      raw = raw.replace(/```[\s\S]*?```/g, (m) => toCodeToken(m));
+      raw = raw.replace(/`[^`\n]*`/g, (m) => toCodeToken(m));
+
+      // 块级数学
+      raw = raw.replace(/\\\[([\s\S]*?)(?:\\\]|\\\\\])/g, (_, m) => '\n\n' + toMathToken(m, true) + '\n\n');
+      raw = raw.replace(/\$\$([\s\S]*?)\$\$/g, (_, m) => '\n\n' + toMathToken(m, true) + '\n\n');
+
+      // 行内数学
+      raw = raw.replace(/\\\(([\s\S]*?)(?:\\\)|\\\\\))/g, (_, m) => toMathToken(m, false));
+      raw = raw.replace(/(^|[^\\])\$([^\$\n]+?)\$/g, (_, prefix, m) => prefix + toMathToken(m, false));
+
+      return { raw, mathTokens, codeTokens };
+    }
+
+    function restoreCodeTokens(raw, codeTokens) {
+      let out = raw;
+      codeTokens.forEach((content, i) => {
+        out = out.split('@@CODE' + i + '@@').join(content);
+      });
+      return out;
     }
 
     function renderMd(text) {
@@ -1853,32 +1891,15 @@ createApp({
         const fence = raw.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/);
         if (fence) raw = fence[1].trim();
         raw = preprocessLatex(raw);
-        // 保护数学块：用占位符替换，避免 marked 转义反斜杠（顺序：\[ \] 和 \( \) 优先于 $$ 和 $）
-        const mathBlocks = [];
-        raw = raw.replace(/\\\[([\s\S]*?)(?:\\\]|\\\\\])/g, (_, m) => {
-          const i = mathBlocks.length;
-          mathBlocks.push({ content: m, display: true });
-          return '\n\n<!--MATH' + i + '-->\n\n';
-        });
-        raw = raw.replace(/\\\(([\s\S]*?)(?:\\\)|\\\\\))/g, (_, m) => {
-          const i = mathBlocks.length;
-          mathBlocks.push({ content: m, display: false });
-          return '<!--MATH' + i + '-->';
-        });
-        raw = raw.replace(/\$\$([\s\S]*?)\$\$/g, (_, m) => {
-          const i = mathBlocks.length;
-          mathBlocks.push({ content: m, display: true });
-          return '\n\n<!--MATH' + i + '-->\n\n';
-        });
-        raw = raw.replace(/\$([^\$\n]+)\$/g, (_, m) => {
-          const i = mathBlocks.length;
-          mathBlocks.push({ content: m, display: false });
-          return '<!--MATH' + i + '-->';
-        });
+
+        const protectedObj = protectMathSegments(raw);
+        raw = protectedObj.raw;
+        raw = restoreCodeTokens(raw, protectedObj.codeTokens);
+
         let html = raw ? marked.parse(raw) : '';
-        mathBlocks.forEach((b, i) => {
-          const ph = '<!--MATH' + i + '-->';
-          const replacement = b.display ? '\\[' + b.content + '\\]' : '\\(' + b.content + '\\)';
+        protectedObj.mathTokens.forEach((b, i) => {
+          const ph = '@@MATH' + i + '@@';
+          const replacement = renderKatexFragment(b.content, !!b.display);
           html = html.split(ph).join(replacement);
         });
         return html;
