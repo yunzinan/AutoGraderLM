@@ -1,5 +1,7 @@
 # AutoGraderLM
 
+![AutoGraderLM](static/badge.png)
+
 **Automatic LLM-based Grader for Homework Grading** — A web application that uses vision-capable LLMs to segment, grade, and analyze student PDF submissions with a graphical interface.
 
 ---
