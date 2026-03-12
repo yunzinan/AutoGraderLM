@@ -131,6 +131,36 @@ def _list_pdfs() -> list[str]:
     return sorted(paths)
 
 
+def _list_unsegmented_pdfs() -> list[str]:
+    """仅返回尚未切分的 PDF（answers 下无该 stem 的 for_llm 或 segments）。"""
+    all_pdfs = _list_pdfs()
+    answers_dir = get_answers_dir()
+    if not answers_dir.exists():
+        return all_pdfs
+    out = []
+    for p in all_pdfs:
+        stem = Path(p).stem
+        sub = answers_dir / stem
+        if not sub.is_dir():
+            out.append(p)
+            continue
+        if (sub / "_pages" / "for_llm").exists() or (sub / "_pages" / "segments.json").exists():
+            continue
+        out.append(p)
+    return out
+
+
+def _filter_answer_map_ungraded(answer_map: dict[str, dict[str, list[str]]]) -> dict[str, dict[str, list[str]]]:
+    """仅保留尚未评阅的 stem（results 下无该 stem 的 json）。"""
+    results_dir = get_results_dir()
+    if not results_dir.exists():
+        return dict(answer_map)
+    return {
+        stem: by_q for stem, by_q in answer_map.items()
+        if not (results_dir / f"{stem}.json").exists()
+    }
+
+
 async def _update_status(msg: str, current: int, total: int):
     _status.message = msg
     _status.current = current
@@ -138,55 +168,119 @@ async def _update_status(msg: str, current: int, total: int):
 
 
 @router.post("/segment")
-async def start_segmentation() -> dict:
+async def start_segmentation(body: dict | None = Body(default=None)) -> dict:
+    """全量或增量切分。body 可含 "incremental": true，仅处理尚未切分的 PDF。"""
     global _running_task, _answer_map
     if _status.stage not in ("idle", "done", "error"):
         return {"error": f"Pipeline already running: {_status.stage}"}
 
+    incremental = bool((body or {}).get("incremental"))
+    questions = load_all_questions()
+    pdfs = _list_unsegmented_pdfs() if incremental else _list_pdfs()
+    num_pdfs = len(pdfs)
+    if not num_pdfs:
+        return {
+            "error": "增量切分时未找到待切分作业" if incremental else "未找到 PDF 文件",
+            "num_pdfs": 0,
+        }
+
     _status.stage = "segmentation"
     _status.errors = []
-    questions = load_all_questions()
-    pdfs = _list_pdfs()
-    num_pdfs = len(pdfs)
     _status.total = num_pdfs
     _status.current = 0
-    _status.message = f"即将切分 {num_pdfs} 份作业…" if num_pdfs else "未找到 PDF 文件"
+    _status.message = f"即将{'增量' if incremental else ''}切分 {num_pdfs} 份作业…"
 
     async def _run():
         global _answer_map
         try:
             cfg = get_config()
-            _answer_map = await run_segmentation(cfg, questions, pdfs, on_progress=_update_status)
+            new_map = await run_segmentation(cfg, questions, pdfs, on_progress=_update_status)
+            _answer_map = _build_answer_map_from_disk()
             _status.stage = "done"
-            _status.message = f"切分完成，共处理 {len(_answer_map)} 份作业"
+            _status.message = f"切分完成，本次处理 {len(new_map)} 份作业"
         except Exception as e:
             logger.exception("Segmentation pipeline failed")
             _status.stage = "error"
             _status.errors.append(str(e))
 
     _running_task = asyncio.create_task(_run())
-    return {"ok": True, "num_pdfs": num_pdfs}
+    return {"ok": True, "num_pdfs": num_pdfs, "incremental": incremental}
+
+
+@router.post("/segment/one")
+async def start_segmentation_one(body: dict = Body(...)) -> dict:
+    """对指定同学的作业重新执行 AI 切分（如重新提交了 PDF）。"""
+    global _running_task, _answer_map
+    stem = (body.get("stem") or "").strip().removesuffix(".pdf")
+    if not stem:
+        return {"error": "请提供 stem（作业目录名，如学号_姓名_随机码）"}
+
+    if _status.stage not in ("idle", "done", "error"):
+        return {"error": f"Pipeline already running: {_status.stage}"}
+
+    pdfs = _list_pdfs()
+    pdf_path = None
+    for p in pdfs:
+        if Path(p).stem == stem:
+            pdf_path = p
+            break
+    if not pdf_path:
+        return {"error": f"未找到该作业的 PDF：{stem}"}
+
+    _status.stage = "segmentation"
+    _status.errors = []
+    _status.total = 1
+    _status.current = 0
+    _status.message = f"正在重新切分：{stem}"
+
+    async def _run():
+        global _answer_map
+        try:
+            cfg = get_config()
+            questions = load_all_questions()
+            new_map = await run_segmentation(cfg, questions, [pdf_path], on_progress=_update_status)
+            _answer_map = _build_answer_map_from_disk()
+            _status.stage = "done"
+            _status.message = f"已重新切分：{stem}"
+        except Exception as e:
+            logger.exception("Segmentation one failed for %s", stem)
+            _status.stage = "error"
+            _status.errors.append(str(e))
+
+    _running_task = asyncio.create_task(_run())
+    return {"ok": True, "stem": stem}
 
 
 @router.post("/grade")
-async def start_grading() -> dict:
+async def start_grading(body: dict | None = Body(default=None)) -> dict:
+    """全量或增量评分。body 可含 "incremental": true，仅评尚未有 results 的作业。"""
     global _running_task, _answer_map
     if _status.stage not in ("idle", "done", "error"):
         return {"error": f"Pipeline already running: {_status.stage}"}
 
-    # 始终从磁盘加载完整 answer_map，避免因「切分编辑」只保存了单份作业而导致只评一名学生
     _answer_map = _build_answer_map_from_disk()
     if not _answer_map:
         return {"error": "请先运行作业切分，或确认 answers 目录下已有切分结果"}
 
+    incremental = bool((body or {}).get("incremental"))
+    to_grade = _filter_answer_map_ungraded(_answer_map) if incremental else _answer_map
+    if not to_grade:
+        return {
+            "error": "增量评分时没有待评阅作业" if incremental else "没有可评阅的切分结果",
+        }
+
     _status.stage = "grading"
     _status.errors = []
     questions = load_all_questions()
+    total = sum(len(by_q) for by_q in to_grade.values())
+    _status.total = total
+    _status.current = 0
+    _status.message = f"即将{'增量' if incremental else ''}评分，共 {len(to_grade)} 份作业"
 
     async def _run():
         try:
             cfg = get_config()
-            await run_grading(cfg, questions, _answer_map, on_progress=_update_status)
+            await run_grading(cfg, questions, to_grade, on_progress=_update_status)
             _status.stage = "done"
             _status.message = "评分完成"
         except Exception as e:
@@ -195,7 +289,45 @@ async def start_grading() -> dict:
             _status.errors.append(str(e))
 
     _running_task = asyncio.create_task(_run())
-    return {"ok": True}
+    return {"ok": True, "incremental": incremental, "num_students": len(to_grade)}
+
+
+@router.post("/grade/one")
+async def start_grading_one(body: dict = Body(...)) -> dict:
+    """对指定同学的作业重新执行 AI 评阅（如重新提交后已重新切分）。"""
+    global _running_task, _answer_map
+    stem = (body.get("stem") or "").strip().removesuffix(".pdf")
+    if not stem:
+        return {"error": "请提供 stem（作业目录名）"}
+
+    if _status.stage not in ("idle", "done", "error"):
+        return {"error": f"Pipeline already running: {_status.stage}"}
+
+    _answer_map = _build_answer_map_from_disk()
+    if stem not in _answer_map:
+        return {"error": f"未找到该作业的切分结果：{stem}，请先执行切分"}
+
+    one_map = {stem: _answer_map[stem]}
+    _status.stage = "grading"
+    _status.errors = []
+    questions = load_all_questions()
+    _status.total = sum(len(by_q) for by_q in one_map.values())
+    _status.current = 0
+    _status.message = f"正在重新评阅：{stem}"
+
+    async def _run():
+        try:
+            cfg = get_config()
+            await run_grading(cfg, questions, one_map, on_progress=_update_status)
+            _status.stage = "done"
+            _status.message = f"已重新评阅：{stem}"
+        except Exception as e:
+            logger.exception("Grading one failed for %s", stem)
+            _status.stage = "error"
+            _status.errors.append(str(e))
+
+    _running_task = asyncio.create_task(_run())
+    return {"ok": True, "stem": stem}
 
 
 @router.post("/report")

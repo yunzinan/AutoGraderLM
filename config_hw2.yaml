@@ -12,7 +12,7 @@ assignment_configuration:
   excel_in_path: "in.xls"
 
 assignment_segmentation:
-  num_workers: 5
+  num_workers: 10
   max_retry: 3
   llm: 
     model: "gpt-5.2-chat-latest"
@@ -21,7 +21,7 @@ assignment_segmentation:
   
 
 assignment_grading:
-  num_workers: 5
+  num_workers: 10
   max_retry: 3
   llm: 
     model: "gpt-5.2-chat-latest"
@@ -31,7 +31,7 @@ assignment_grading:
 
 assignment_report:
   llm:
-    model: "gpt-5-mini"
+    model: "gpt-5.2-chat-latest"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/report.jinja"
   excel_out_path: "out.xls"

@@ -230,6 +230,60 @@
       </aside>
 
       <main class="space-y-5">
+        <section v-if="page === 'overview'" class="space-y-4">
+          <div class="panel p-5">
+            <h3 class="text-lg font-bold text-slate-900">作业概览</h3>
+            <p class="mt-1 text-sm text-slate-600">根据 config 中 pdf_folder_path、answers、results 及 excel_in_path 统计的份数。</p>
+            <div class="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <div class="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-4 text-center">
+                <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">应交份数</p>
+                <p class="mt-2 text-3xl font-bold text-slate-900">{{ overview.expected_count }}</p>
+                <p class="mt-1 text-xs text-slate-500">excel_in 数据行数</p>
+              </div>
+              <div class="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-4 text-center">
+                <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">已提交份数</p>
+                <p class="mt-2 text-3xl font-bold text-slate-900">{{ overview.submitted_count }}</p>
+                <p class="mt-1 text-xs text-slate-500">PDF 数量</p>
+              </div>
+              <div class="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-4 text-center">
+                <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">已切分份数</p>
+                <p class="mt-2 text-3xl font-bold text-slate-900">{{ overview.segmented_count }}</p>
+                <p class="mt-1 text-xs text-slate-500">answers 目录数</p>
+              </div>
+              <div class="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-4 text-center">
+                <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">已评阅份数</p>
+                <p class="mt-2 text-3xl font-bold text-slate-900">{{ overview.graded_count }}</p>
+                <p class="mt-1 text-xs text-slate-500">results 结果数</p>
+              </div>
+            </div>
+            <div class="mt-4 flex justify-end">
+              <button type="button" class="btn btn-secondary" @click="loadOverview">刷新</button>
+            </div>
+          </div>
+          <div class="panel p-5">
+            <h4 class="text-base font-bold text-slate-900">每份作业状态</h4>
+            <p class="mt-1 text-sm text-slate-600">用于增量切分/评阅及选择单份重新执行。</p>
+            <div class="mt-3 max-h-[360px] overflow-auto rounded-xl border border-slate-200">
+              <table class="w-full text-left text-sm">
+                <thead class="sticky top-0 bg-slate-100 font-semibold text-slate-700">
+                  <tr>
+                    <th class="px-4 py-2">作业（stem）</th>
+                    <th class="px-4 py-2">状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="a in overviewAssignments" :key="a.stem" class="border-t border-slate-100 hover:bg-slate-50/80">
+                    <td class="px-4 py-2 font-medium">{{ maskSensitive(a.label) }}</td>
+                    <td class="px-4 py-2">
+                      <span class="badge" :class="a.status === '已评审' ? 'bg-emerald-100 text-emerald-700' : a.status === '已切分未评审' ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-700'">{{ a.status }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
         <section v-if="page === 'config'" class="space-y-4">
           <div class="panel p-4 lg:p-5">
             <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -363,8 +417,22 @@
               </div>
             </div>
             <div class="mt-4 flex flex-wrap items-center gap-2">
-              <button class="btn btn-primary" @click="runPipeline('segment')" :disabled="isSegmentBusy || isGradingBusy || isReportBusy">开始切分</button>
+              <button class="btn btn-primary" @click="runPipeline('segment')" :disabled="isSegmentBusy || isGradingBusy || isReportBusy">全量切分</button>
+              <button class="btn btn-secondary" @click="runPipeline('segment', { incremental: true })" :disabled="isSegmentBusy || isGradingBusy || isReportBusy">增量切分</button>
               <button v-if="isSegmentBusy" class="btn btn-secondary" @click="cancelPipeline">停止</button>
+            </div>
+            <p class="mt-2 text-xs text-slate-500">增量切分仅处理尚未切分的 PDF；全量切分处理所有 PDF。</p>
+            <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+              <h4 class="text-sm font-semibold text-slate-700">选择作业重新执行 AI 切分</h4>
+              <p class="mt-1 text-xs text-slate-500">同学重新提交 PDF 后，可在此选择该份作业重新切分。输入姓名或学号可筛选下拉选项。</p>
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                <input type="text" class="input max-w-[200px]" v-model="resegmentFilter" placeholder="输入姓名或学号筛选" />
+                <select class="input max-w-xs" v-model="resegmentStem">
+                  <option value="">-- 选择作业 --</option>
+                  <option v-for="a in filteredOverviewForResegment" :key="a.stem" :value="a.stem">{{ maskSensitive(a.label) }}</option>
+                </select>
+                <button type="button" class="btn btn-secondary" @click="runSegmentOne" :disabled="!resegmentStem || isSegmentBusy || isGradingBusy || isReportBusy">重新执行切分</button>
+              </div>
             </div>
             <div v-if="status.stage === 'segmentation'" class="mt-4">
               <p class="mb-2 text-sm font-medium text-slate-600">{{ status.message }}</p>
@@ -394,13 +462,14 @@
             </div>
             <div class="mt-4 flex flex-wrap items-center gap-3">
               <label class="form-label mb-0">选择作业</label>
+              <input type="text" class="input max-w-[200px]" v-model="segmentEditorFilter" placeholder="输入姓名或学号筛选" />
               <select
                 class="input max-w-xs"
                 v-model="segmentEditorSelected"
                 @change="loadSegmentEditorAssignment"
               >
                 <option value="">-- 请选择 --</option>
-                <option v-for="a in segmentEditorAssignments" :key="a.stem" :value="a.stem">{{ maskSensitive(a.label) }}</option>
+                <option v-for="a in filteredSegmentEditorAssignments" :key="a.stem" :value="a.stem">{{ maskSensitive(a.label) }}</option>
               </select>
             </div>
             <div v-if="segmentEditorLoadError" class="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{{ segmentEditorLoadError }}</div>
@@ -545,8 +614,22 @@
             <h3 class="text-lg font-bold text-slate-900">作业评分</h3>
             <p class="mt-2 text-sm leading-6 text-slate-600">基于切分结果与题目配置逐题评分，自动重试低置信度结果并汇总至人工复核。</p>
             <div class="mt-4 flex flex-wrap items-center gap-2">
-              <button class="btn btn-primary" @click="runPipeline('grade')" :disabled="isGradingBusy || isSegmentBusy || isReportBusy">开始评分</button>
+              <button class="btn btn-primary" @click="runPipeline('grade')" :disabled="isGradingBusy || isSegmentBusy || isReportBusy">全量评分</button>
+              <button class="btn btn-secondary" @click="runPipeline('grade', { incremental: true })" :disabled="isGradingBusy || isSegmentBusy || isReportBusy">增量评分</button>
               <button v-if="isGradingBusy" class="btn btn-secondary" @click="cancelPipeline">停止</button>
+            </div>
+            <p class="mt-2 text-xs text-slate-500">增量评分仅处理已切分但尚未评阅的作业；全量评分处理所有已切分作业。</p>
+            <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+              <h4 class="text-sm font-semibold text-slate-700">选择作业重新执行 AI 评阅</h4>
+              <p class="mt-1 text-xs text-slate-500">同学重新提交并重新切分后，可在此选择该份作业重新评阅。输入姓名或学号可筛选下拉选项。</p>
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                <input type="text" class="input max-w-[200px]" v-model="regradeFilter" placeholder="输入姓名或学号筛选" />
+                <select class="input max-w-xs" v-model="regradeOnlyStem">
+                  <option value="">-- 选择作业 --</option>
+                  <option v-for="a in filteredOverviewForRegrade" :key="a.stem" :value="a.stem">{{ maskSensitive(a.label) }}</option>
+                </select>
+                <button type="button" class="btn btn-secondary" @click="runGradeOne" :disabled="!regradeOnlyStem || isGradingBusy || isSegmentBusy || isReportBusy">重新执行评阅</button>
+              </div>
             </div>
             <div v-if="status.stage === 'grading'" class="mt-4">
               <p class="mb-2 text-sm font-medium text-slate-600">{{ status.message }}</p>
@@ -739,9 +822,10 @@
             <p class="mt-1 text-sm text-slate-600">按学生查看每道题的题干、作答图片与评分详情。</p>
             <div class="mt-4">
               <label class="form-label">选择学生</label>
+              <input type="text" class="input max-w-[200px] mb-2 block" v-model="resultStudentFilter" placeholder="输入姓名或学号筛选" />
               <select class="input max-w-lg" v-model="selectedStudent" @change="loadStudentResult" :disabled="studentResultLoading">
                 <option value="">-- 请选择 --</option>
-                <option v-for="s in studentList" :value="s.filename_stem">
+                <option v-for="s in filteredStudentList" :key="s.filename_stem" :value="s.filename_stem">
                   {{ maskSensitive(s.student_id) }} - {{ maskSensitive(s.student_name) }}（总分: {{ s.total_score }}）
                 </option>
               </select>
@@ -916,6 +1000,7 @@ createApp({
   setup() {
     const page = ref('config');
     const navItems = [
+      { id: 'overview', icon: '0', label: '作业概览', desc: '应交/已提交/已切分/已评阅份数及每份作业状态。' },
       { id: 'config', icon: '1', label: '作业配置', desc: '配置题目、评分标准与示例答案，支持文本和图片。' },
       { id: 'segment', icon: '2', label: '作业解析', desc: '读取 PDF 并按题目切分作答区域，生成题目图片。' },
       { id: 'grade', icon: '3', label: '作业评分', desc: '按题目自动评分并执行置信度驱动的重试策略。' },
@@ -969,6 +1054,14 @@ createApp({
     const segmentEditorDrawStart = ref(null);
     const segmentEditorDrawRect = ref({});
     const segmentEditorDirty = ref(false);
+    const overview = ref({ expected_count: 0, submitted_count: 0, segmented_count: 0, graded_count: 0 });
+    const overviewAssignments = ref([]);
+    const resegmentStem = ref('');
+    const regradeOnlyStem = ref('');
+    const resegmentFilter = ref('');
+    const regradeFilter = ref('');
+    const segmentEditorFilter = ref('');
+    const resultStudentFilter = ref('');
     const toast = reactive({ show: false, text: '', type: 'success' });
     let toastTimer = null;
     const fullscreenImageUrl = ref(null);
@@ -1011,6 +1104,42 @@ createApp({
 
     const rosterHeadersDisplay = computed(() => {
       return (rosterHeaders.value || []).filter(h => !isRosterColumnHidden(h));
+    });
+    const overviewAssignmentsGradeable = computed(() => {
+      return (overviewAssignments.value || []).filter(a => a.status === '已切分未评审' || a.status === '已评审');
+    });
+    function matchStemLabel(item, q) {
+      if (!q) return true;
+      const s = (item.stem || item.label || '').toString();
+      return s.includes(q);
+    }
+    const filteredOverviewForResegment = computed(() => {
+      const q = (resegmentFilter.value || '').trim();
+      const list = overviewAssignments.value || [];
+      if (!q) return list;
+      return list.filter(a => matchStemLabel(a, q));
+    });
+    const filteredOverviewForRegrade = computed(() => {
+      const q = (regradeFilter.value || '').trim();
+      const list = overviewAssignmentsGradeable.value || [];
+      if (!q) return list;
+      return list.filter(a => matchStemLabel(a, q));
+    });
+    const filteredSegmentEditorAssignments = computed(() => {
+      const q = (segmentEditorFilter.value || '').trim();
+      const list = segmentEditorAssignments.value || [];
+      if (!q) return list;
+      return list.filter(a => matchStemLabel(a, q));
+    });
+    const filteredStudentList = computed(() => {
+      const q = (resultStudentFilter.value || '').trim();
+      const list = studentList.value || [];
+      if (!q) return list;
+      return list.filter(s => {
+        const id = String(s.student_id ?? '');
+        const name = String(s.student_name ?? '');
+        return id.includes(q) || name.includes(q);
+      });
     });
     const ROSTER_SORTABLE_HEADERS = ['学号', '成绩（录入项）', '成绩'];
     const rosterSorted = computed(() => {
@@ -1185,6 +1314,15 @@ createApp({
     async function loadReports() {
       reports.value = await api('/api/pipeline/reports');
     }
+    async function loadOverview() {
+      const data = await api('/api/stats/overview');
+      if (!data.error) overview.value = data;
+    }
+    async function loadOverviewAssignments() {
+      const list = await api('/api/stats/overview/assignments');
+      if (!list || !Array.isArray(list)) return;
+      overviewAssignments.value = list;
+    }
 
     function addQuestion() {
       const idx = questions.value.length + 1;
@@ -1243,6 +1381,15 @@ createApp({
           if (status.stage === 'error' && status.errors && status.errors.length) {
             showToast(status.errors[0] || '执行失败', 'error');
           }
+          await loadOverview();
+          await loadOverviewAssignments();
+          if (lastAction.value === 'segment') await loadSegmentEditorAssignments();
+          if (lastAction.value === 'grade') {
+            await loadStudentList();
+            await loadRoster();
+            await loadSummary();
+            await loadReviewItems();
+          }
           if (lastAction.value === 'report') {
             await loadReports();
             await loadRoster();
@@ -1251,11 +1398,54 @@ createApp({
         }
       }, 1500);
     }
-    async function runPipeline(action) {
+    async function runPipeline(action, body) {
       if (pollTimer) clearInterval(pollTimer);
       lastAction.value = action;
       await api('/api/pipeline/reset', { method: 'POST' });
-      const res = await api(`/api/pipeline/${action}`, { method: 'POST' });
+      const opts = { method: 'POST' };
+      if (body && Object.keys(body).length) {
+        opts.headers = { 'Content-Type': 'application/json' };
+        opts.body = JSON.stringify(body);
+      }
+      const res = await api(`/api/pipeline/${action}`, opts);
+      if (res && res.error) {
+        showToast(res.error, 'error');
+        await loadStatus();
+        return;
+      }
+      await loadStatus();
+      startStatusPolling();
+    }
+    async function runSegmentOne() {
+      const stem = resegmentStem.value?.trim();
+      if (!stem) return;
+      if (pollTimer) clearInterval(pollTimer);
+      lastAction.value = 'segment';
+      await api('/api/pipeline/reset', { method: 'POST' });
+      const res = await api('/api/pipeline/segment/one', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stem })
+      });
+      if (res && res.error) {
+        showToast(res.error, 'error');
+        await loadStatus();
+        return;
+      }
+      await loadStatus();
+      startStatusPolling();
+    }
+    async function runGradeOne() {
+      const stem = regradeOnlyStem.value?.trim();
+      if (!stem) return;
+      if (pollTimer) clearInterval(pollTimer);
+      lastAction.value = 'grade';
+      await api('/api/pipeline/reset', { method: 'POST' });
+      const res = await api('/api/pipeline/grade/one', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stem })
+      });
       if (res && res.error) {
         showToast(res.error, 'error');
         await loadStatus();
@@ -1663,6 +1853,10 @@ createApp({
       try { localStorage.setItem('autograder_anonymous_mode', v ? 'true' : 'false'); } catch (_) {}
     });
     watch(page, async p => {
+      if (p === 'overview') {
+        await loadOverview();
+        await loadOverviewAssignments();
+      }
       if (p === 'review') {
         await loadQuestions();
         await loadReviewItems();
@@ -1679,12 +1873,14 @@ createApp({
       if (p === 'report') await loadReports();
       if (p === 'config') await loadQuestions();
       if (p === 'segment') {
+        await loadOverviewAssignments();
         await loadSegmentEditorAssignments();
         if (fromReviewStem.value) {
           segmentEditorSelected.value = fromReviewStem.value;
           await loadSegmentEditorAssignment();
         }
       }
+      if (p === 'grade') await loadOverviewAssignments();
     });
 
     function onSegmentEditorKeydown(ev) {
@@ -1703,6 +1899,8 @@ createApp({
       await loadConfig();
       await loadQuestions();
       await loadStatus();
+      await loadOverview();
+      await loadOverviewAssignments();
       await loadReviewItems();
       // 若服务端 pipeline 仍在运行（如刷新页面后重进），则启动轮询以实时更新进度
       if (['grading', 'segmentation', 'report'].includes(status.stage)) {
@@ -1720,6 +1918,23 @@ createApp({
     return {
       page,
       navItems,
+      overview,
+      overviewAssignments,
+      overviewAssignmentsGradeable,
+      loadOverview,
+      loadOverviewAssignments,
+      resegmentStem,
+      regradeOnlyStem,
+      resegmentFilter,
+      regradeFilter,
+      segmentEditorFilter,
+      resultStudentFilter,
+      filteredOverviewForResegment,
+      filteredOverviewForRegrade,
+      filteredSegmentEditorAssignments,
+      filteredStudentList,
+      runSegmentOne,
+      runGradeOne,
       anonymousMode,
       maskSensitive,
       maskRosterCell,

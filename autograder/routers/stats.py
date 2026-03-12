@@ -1,4 +1,4 @@
-"""Router: score statistics, roster table, and question reports."""
+"""Router: score statistics, roster table, question reports, and assignment overview."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
-from autograder.config import get_config
+from autograder.config import get_config, get_answers_dir, get_results_dir
 from autograder.excel_utils import (
     HEADER_COMMENT,
     HEADER_SCORE,
@@ -20,6 +20,109 @@ from autograder.pipeline.grading import load_all_results
 from autograder.pipeline.report import build_student_comment, compute_score_distribution
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
+
+
+def _count_pdfs() -> int:
+    """pdf_folder_path 下 PDF 文件数量，表示已提交的作业份数。"""
+    cfg = get_config()
+    folder = Path(cfg.assignment_configuration.pdf_folder_path)
+    if not folder.exists():
+        return 0
+    count = 0
+    for ext in ("*.pdf", "*.PDF"):
+        count += len(list(folder.glob(ext)))
+    return count
+
+
+def _count_expected_from_excel() -> int:
+    """excel_in_path 中数据行数，表示应交作业份数。"""
+    cfg = get_config()
+    in_path = Path(cfg.assignment_configuration.excel_in_path)
+    if not in_path.exists():
+        return 0
+    try:
+        rows = read_student_roster(in_path)
+        return len(rows)
+    except Exception:
+        return 0
+
+
+def _count_segmented() -> int:
+    """answers/ 下有效作业目录数（含 _pages/for_llm 或 segments），表示已完成切分的份数。"""
+    answers_dir = get_answers_dir()
+    if not answers_dir.exists():
+        return 0
+    count = 0
+    for sub in answers_dir.iterdir():
+        if not sub.is_dir() or sub.name.startswith("_"):
+            continue
+        if (sub / "_pages" / "for_llm").exists() or (sub / "_pages" / "segments.json").exists():
+            count += 1
+    return count
+
+
+def _count_graded() -> int:
+    """results/ 下学生结果 JSON 数量（排除 question_reports.json），表示已完成评阅的份数。"""
+    results_dir = get_results_dir()
+    if not results_dir.exists():
+        return 0
+    return sum(
+        1 for p in results_dir.glob("*.json")
+        if p.name != "question_reports.json"
+    )
+
+
+def _list_assignments_with_status() -> list[dict]:
+    """列出所有已提交作业（以 PDF 为准）及其状态：未切分、已切分未评审、已评审。"""
+    cfg = get_config()
+    pdf_folder = Path(cfg.assignment_configuration.pdf_folder_path)
+    answers_dir = get_answers_dir()
+    results_dir = get_results_dir()
+
+    stems: set[str] = set()
+    for ext in ("*.pdf", "*.PDF"):
+        for p in pdf_folder.glob(ext):
+            stems.add(p.stem)
+
+    out = []
+    for stem in sorted(stems):
+        has_answer = (
+            answers_dir.exists()
+            and (answers_dir / stem).is_dir()
+            and (
+                (answers_dir / stem / "_pages" / "for_llm").exists()
+                or (answers_dir / stem / "_pages" / "segments.json").exists()
+            )
+        )
+        has_result = (
+            results_dir.exists()
+            and (results_dir / f"{stem}.json").exists()
+        )
+        if has_result:
+            status = "已评审"
+        elif has_answer:
+            status = "已切分未评审"
+        else:
+            status = "未切分"
+        out.append({"stem": stem, "label": stem, "status": status})
+    return out
+
+
+@router.get("/overview")
+def get_overview() -> dict:
+    """作业概览：应交份数、已提交份数、已切分份数、已评阅份数。"""
+    return {
+        "expected_count": _count_expected_from_excel(),
+        "submitted_count": _count_pdfs(),
+        "segmented_count": _count_segmented(),
+        "graded_count": _count_graded(),
+    }
+
+
+@router.get("/overview/assignments")
+def get_overview_assignments() -> list[dict]:
+    """每份作业的状态列表，用于增量切分/评阅与重新执行。"""
+    return _list_assignments_with_status()
 
 
 def _roster_with_live_scores() -> list[dict]:
