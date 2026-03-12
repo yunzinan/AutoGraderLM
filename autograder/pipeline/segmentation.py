@@ -14,7 +14,7 @@ from langgraph.graph import END, StateGraph
 from autograder.config import AppConfig, get_answers_dir, resolve_assignment_path
 from autograder.llm import build_llm, build_vision_message_segmented, extract_json, invoke_with_log
 from autograder.models import QuestionConfig, SegmentationResult
-from autograder.pdf_utils import render_pdf_pages, save_answer_images
+from autograder.pdf_utils import render_pdf_pages, save_answer_images, student_canonical_stem
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +55,8 @@ def _render_and_cache_pages(pdf_path: str) -> tuple[list[str], list[tuple[int, i
     from PIL import Image
 
     pages = render_pdf_pages(pdf_path)
-    stem = Path(pdf_path).stem
-    cache_dir = get_answers_dir() / stem / "_pages"
+    canonical = student_canonical_stem(pdf_path)
+    cache_dir = get_answers_dir() / canonical / "_pages"
     cache_dir.mkdir(parents=True, exist_ok=True)
     # 原图保存到 _pages（便于人工查看）
     for i, img in enumerate(pages):
@@ -162,9 +162,10 @@ def _process_one_pdf_sync(
 ) -> tuple[str, dict[str, list[str]] | None]:
     """Process a single PDF (render, LLM segment, save images). Runs in thread.
 
-    Returns (pdf_stem, answer_map) on success, (pdf_stem, None) on failure.
+    Returns (canonical_stem, answer_map) on success, (canonical_stem, None) on failure.
+    使用规范 stem（学号_姓名）作为 answers 目录名，便于同一学生更新作业时覆盖。
     """
-    stem = Path(pdf_path).stem
+    canonical = student_canonical_stem(pdf_path)
     graph = build_segmentation_graph(cfg)
     app = graph.compile()
     max_retry = cfg.assignment_segmentation.max_retry
@@ -189,11 +190,11 @@ def _process_one_pdf_sync(
             max_retry,
             final.get("error"),
         )
-        return (stem, None)
+        return (canonical, None)
 
     seg_result = SegmentationResult(**final["result"])
     # 持久化 for_llm 坐标系下的 segment，供人工重新切分界面加载与保存
-    cache_dir = get_answers_dir() / stem / "_pages"
+    cache_dir = get_answers_dir() / canonical / "_pages"
     segments_path = cache_dir / "segments.json"
     segments_data = {
         "dimensions": page_dims,
@@ -237,7 +238,7 @@ def _process_one_pdf_sync(
             paths = save_answer_images(pdf_path, full_res_pages, flat_regions, output_dir=get_answers_dir())
             answer_map[qr.qid] = paths
 
-    return (stem, answer_map)
+    return (canonical, answer_map)
 
 
 async def run_segmentation(
@@ -320,8 +321,9 @@ def apply_manual_segments(
 
     questions: [{"qid": str, "regions": [{"page": int, "bbox": [x1,y1,x2,y2]}]}]
     同一题的多个 region 按 (page, y1) 排序后依次作为该题的作答部分。
+    使用规范 stem（学号_姓名）作为 answers 目录名。
     """
-    stem = Path(pdf_path).stem
+    stem = student_canonical_stem(pdf_path)
     full_res_pages = render_pdf_pages(pdf_path)
     answer_map: dict[str, list[str]] = {}
 

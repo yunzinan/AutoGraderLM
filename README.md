@@ -159,11 +159,11 @@ Per-assignment data (under `assignment_path`, e.g. `hw2/`):
 
 ```
 hw2/
-├── res/           # Student PDFs ({学号}_{姓名}_*.pdf)
+├── res/           # Student PDFs ({学号}_{姓名}.pdf or {学号}_{姓名}_*.pdf; 学号_姓名 used as key)
 ├── in.xls         # Student roster (学号, 姓名, 成绩, 评语)
 ├── questions/     # Question configs (Q1, Q2, ...)
-├── answers/       # Segmented images per student
-└── results/      # Grading JSON per student
+├── answers/       # Segmented images per student (dirs named 学号_姓名; overwrite on re-run)
+└── results/      # Grading JSON per student (学号_姓名.json; overwrite on re-run)
 ```
 
 ---

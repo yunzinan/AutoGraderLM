@@ -13,6 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body
 
 from autograder.config import get_config, get_answers_dir, get_results_dir, resolve_assignment_path
+from autograder.pdf_utils import student_canonical_stem
 from autograder.models import PipelineStatus, QuestionReport
 from autograder.pipeline.grading import (
     _grade_one_sync,
@@ -132,15 +133,15 @@ def _list_pdfs() -> list[str]:
 
 
 def _list_unsegmented_pdfs() -> list[str]:
-    """仅返回尚未切分的 PDF（answers 下无该 stem 的 for_llm 或 segments）。"""
+    """仅返回尚未切分的 PDF（answers 下无该学生规范目录 学号_姓名 的 for_llm 或 segments）。"""
     all_pdfs = _list_pdfs()
     answers_dir = get_answers_dir()
     if not answers_dir.exists():
         return all_pdfs
     out = []
     for p in all_pdfs:
-        stem = Path(p).stem
-        sub = answers_dir / stem
+        canonical = student_canonical_stem(p)
+        sub = answers_dir / canonical
         if not sub.is_dir():
             out.append(p)
             continue
@@ -209,11 +210,11 @@ async def start_segmentation(body: dict | None = Body(default=None)) -> dict:
 
 @router.post("/segment/one")
 async def start_segmentation_one(body: dict = Body(...)) -> dict:
-    """对指定同学的作业重新执行 AI 切分（如重新提交了 PDF）。"""
+    """对指定同学的作业重新执行 AI 切分（如重新提交了 PDF）。stem 可为规范名 学号_姓名 或完整 PDF 文件名 stem。"""
     global _running_task, _answer_map
     stem = (body.get("stem") or "").strip().removesuffix(".pdf")
     if not stem:
-        return {"error": "请提供 stem（作业目录名，如学号_姓名_随机码）"}
+        return {"error": "请提供 stem（作业目录名，如学号_姓名 或 学号_姓名_随机码）"}
 
     if _status.stage not in ("idle", "done", "error"):
         return {"error": f"Pipeline already running: {_status.stage}"}
@@ -221,7 +222,7 @@ async def start_segmentation_one(body: dict = Body(...)) -> dict:
     pdfs = _list_pdfs()
     pdf_path = None
     for p in pdfs:
-        if Path(p).stem == stem:
+        if Path(p).stem == stem or student_canonical_stem(p) == stem:
             pdf_path = p
             break
     if not pdf_path:
@@ -486,7 +487,7 @@ def segment_editor_save_assignment(stem: str, body: dict = Body(...)) -> dict:
     pdfs = _list_pdfs()
     pdf_path = None
     for p in pdfs:
-        if Path(p).stem == stem:
+        if student_canonical_stem(p) == stem:
             pdf_path = p
             break
     if not pdf_path:

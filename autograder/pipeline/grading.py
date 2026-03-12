@@ -15,7 +15,7 @@ from langgraph.graph import END, StateGraph
 from autograder.config import AppConfig, get_results_dir, resolve_assignment_path
 from autograder.llm import build_llm, build_vision_message_segmented, extract_json, invoke_with_log
 from autograder.models import GradingOutput, GradingRecord, QuestionConfig, StudentResult, _now_iso
-from autograder.pdf_utils import parse_student_info
+from autograder.pdf_utils import parse_student_info, student_canonical_stem
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,8 @@ def build_grading_graph(cfg: AppConfig) -> StateGraph:
 def _save_student_result(result: StudentResult) -> None:
     results_dir = get_results_dir()
     results_dir.mkdir(parents=True, exist_ok=True)
-    path = results_dir / f"{Path(result.filename).stem}.json"
+    canonical = student_canonical_stem(result.filename)
+    path = results_dir / f"{canonical}.json"
     path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
 
 

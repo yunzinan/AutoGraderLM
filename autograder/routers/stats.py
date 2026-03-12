@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
 from autograder.config import get_config, get_answers_dir, get_results_dir
+from autograder.pdf_utils import student_canonical_stem
 from autograder.excel_utils import (
     HEADER_COMMENT,
     HEADER_SCORE,
@@ -23,15 +24,16 @@ router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 
 def _count_pdfs() -> int:
-    """pdf_folder_path 下 PDF 文件数量，表示已提交的作业份数。"""
+    """pdf_folder_path 下按学号_姓名去重后的 PDF 数量，表示已提交的作业份数（同一学生多份只计一）。"""
     cfg = get_config()
     folder = Path(cfg.assignment_configuration.pdf_folder_path)
     if not folder.exists():
         return 0
-    count = 0
+    stems = set()
     for ext in ("*.pdf", "*.PDF"):
-        count += len(list(folder.glob(ext)))
-    return count
+        for p in folder.glob(ext):
+            stems.add(student_canonical_stem(p))
+    return len(stems)
 
 
 def _count_expected_from_excel() -> int:
@@ -73,7 +75,7 @@ def _count_graded() -> int:
 
 
 def _list_assignments_with_status() -> list[dict]:
-    """列出所有已提交作业（以 PDF 为准）及其状态：未切分、已切分未评审、已评审。"""
+    """列出所有已提交作业（按学号_姓名去重，以 PDF 为准）及其状态：未切分、已切分未评审、已评审。"""
     cfg = get_config()
     pdf_folder = Path(cfg.assignment_configuration.pdf_folder_path)
     answers_dir = get_answers_dir()
@@ -82,7 +84,7 @@ def _list_assignments_with_status() -> list[dict]:
     stems: set[str] = set()
     for ext in ("*.pdf", "*.PDF"):
         for p in pdf_folder.glob(ext):
-            stems.add(p.stem)
+            stems.add(student_canonical_stem(p))
 
     out = []
     for stem in sorted(stems):

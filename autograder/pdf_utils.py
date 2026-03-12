@@ -43,14 +43,15 @@ def save_answer_images(
 ) -> list[str]:
     """Crop regions from rendered pages and save as PNGs.
 
-    保存路径符合文档：./answers/{PDF文件名}/{qid}-{page-idx}.png，
+    保存路径：./answers/{学号_姓名}/{qid}-{page-idx}.png（规范目录名，不含 PDF 文件名末尾 hash），
     其中 page-idx 为该题下区域的序号（从 0 开始）。
 
     *regions* – list of {"qid": str, "page": int, "bbox": [x1,y1,x2,y2]}.
     Returns the list of saved file paths.
+    目录名使用规范 stem（学号_姓名），不含 hash 后缀，便于同一学生更新作业时覆盖。
     """
-    pdf_stem = Path(pdf_path).stem
-    out_base = Path(output_dir) / pdf_stem
+    canonical = student_canonical_stem(pdf_path)
+    out_base = Path(output_dir) / canonical
     out_base.mkdir(parents=True, exist_ok=True)
 
     saved: list[str] = []
@@ -78,3 +79,11 @@ def parse_student_info(filename: str) -> tuple[str, str]:
     if len(parts) >= 2:
         return parts[0], parts[1]
     return stem, ""
+
+
+def student_canonical_stem(filename: str | Path) -> str:
+    """从 PDF 文件名得到规范目录名：仅学号_姓名，不含末尾 hash，便于覆盖更新同一学生的作业。"""
+    stuid, name = parse_student_info(str(filename))
+    if name:
+        return f"{stuid}_{name}"
+    return Path(filename).stem
