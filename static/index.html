@@ -931,6 +931,54 @@
             </div>
           </div>
 
+          <div v-if="hasScoreData" class="panel p-4 lg:p-5">
+            <h4 class="mb-4 text-base font-bold text-slate-900">成绩分布概览</h4>
+            <div class="grid gap-6 items-center lg:grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)]">
+              <div>
+                <p class="mb-2 text-xs font-semibold text-slate-500">总分柱状图</p>
+                <div class="flex h-40 items-end gap-1.5 overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                  <div
+                    v-for="item in scoreBarItems"
+                    :key="item.score"
+                    class="flex min-w-[18px] flex-1 flex-col items-center"
+                  >
+                    <span class="mb-1 text-[10px] text-slate-500">{{ item.count }}</span>
+                    <div
+                      class="w-full max-w-[26px] rounded-t-md bg-gradient-to-b from-brand-400 to-brand-600"
+                      :style="{ height: (item.count / maxScoreBarCount * 120) + 'px' }"
+                    ></div>
+                    <span class="mt-1 text-[10px] text-slate-500">{{ item.score }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <p class="mb-2 text-xs font-semibold text-slate-500">分数段扇形图</p>
+                <div class="flex items-center gap-4">
+                  <div
+                    class="h-32 w-32 rounded-full border border-slate-200 bg-slate-100"
+                    :style="scoreBucketPieStyle"
+                  ></div>
+                  <div class="space-y-1.5 text-xs text-slate-600">
+                    <div
+                      v-for="(bucket, idx) in scoreBuckets"
+                      :key="bucket.label"
+                      class="flex items-center gap-2"
+                    >
+                      <span
+                        class="inline-block h-2.5 w-2.5 rounded-sm"
+                        :style="{ backgroundColor: scoreBucketColors[idx % scoreBucketColors.length] }"
+                      ></span>
+                      <span class="w-18">{{ bucket.label }}</span>
+                      <span class="text-slate-400">({{ bucket.count }})</span>
+                    </div>
+                    <p class="mt-2 text-[11px] text-slate-400">按“成绩（录入项）/成绩”字段自动统计。</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="panel p-4 lg:p-5">
             <div class="overflow-x-auto">
               <table class="w-full min-w-[720px] text-sm">
@@ -1160,6 +1208,78 @@ createApp({
         return order === 'asc' ? cmp : -cmp;
       });
       return list;
+    });
+
+    const scoreField = computed(() => {
+      const headers = rosterHeaders.value || [];
+      if (headers.includes('成绩（录入项）')) return '成绩（录入项）';
+      if (headers.includes('成绩')) return '成绩';
+      return null;
+    });
+    const scoreBarItems = computed(() => {
+      const field = scoreField.value;
+      if (!field) return [];
+      const map = {};
+      (roster.value || []).forEach(row => {
+        const v = Number(row[field]);
+        if (!Number.isFinite(v)) return;
+        const key = String(v);
+        map[key] = (map[key] || 0) + 1;
+      });
+      return Object.entries(map)
+        .map(([score, count]) => ({ score: Number(score), count }))
+        .filter(item => !Number.isNaN(item.score))
+        .sort((a, b) => a.score - b.score);
+    });
+    const maxScoreBarCount = computed(() => {
+      return scoreBarItems.value.reduce((max, item) => Math.max(max, item.count), 0) || 1;
+    });
+    const scoreBucketColors = ['#4f46e5', '#0ea5e9', '#22c55e', '#eab308', '#f97316'];
+    const scoreBuckets = computed(() => {
+      const field = scoreField.value;
+      const buckets = [
+        { label: '90-100', min: 90, max: 100, count: 0 },
+        { label: '80-89', min: 80, max: 89.9999, count: 0 },
+        { label: '70-79', min: 70, max: 79.9999, count: 0 },
+        { label: '60-69', min: 60, max: 69.9999, count: 0 },
+        { label: '0-59', min: 0, max: 59.9999, count: 0 }
+      ];
+      if (!field) return buckets;
+      (roster.value || []).forEach(row => {
+        const v = Number(row[field]);
+        if (!Number.isFinite(v)) return;
+        for (const b of buckets) {
+          if (v >= b.min && v <= b.max) {
+            b.count += 1;
+            break;
+          }
+        }
+      });
+      return buckets;
+    });
+    const scoreBucketTotal = computed(() => {
+      return scoreBuckets.value.reduce((sum, b) => sum + b.count, 0);
+    });
+    const scoreBucketPieStyle = computed(() => {
+      const total = scoreBucketTotal.value || 1;
+      let acc = 0;
+      const parts = scoreBuckets.value
+        .map((b, idx) => {
+          if (!b.count) return null;
+          const start = (acc / total) * 100;
+          acc += b.count;
+          const end = (acc / total) * 100;
+          const color = scoreBucketColors[idx % scoreBucketColors.length];
+          return `${color} ${start}% ${end}%`;
+        })
+        .filter(Boolean);
+      if (!parts.length) {
+        return { background: '#e5e7eb' };
+      }
+      return { background: `conic-gradient(${parts.join(',')})` };
+    });
+    const hasScoreData = computed(() => {
+      return !!scoreField.value && scoreBarItems.value.length > 0;
     });
 
     function setRosterSort(header) {
@@ -1974,6 +2094,13 @@ createApp({
       rosterSorted,
       rosterSortBy,
       rosterSortOrder,
+      scoreField,
+      scoreBarItems,
+      maxScoreBarCount,
+      scoreBuckets,
+      scoreBucketColors,
+      scoreBucketPieStyle,
+      hasScoreData,
       setRosterSort,
       goToStudentResult,
       regradeQuestion,
