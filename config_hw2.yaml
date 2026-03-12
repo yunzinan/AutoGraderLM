@@ -34,6 +34,7 @@ assignment_regrade:
 
 
 assignment_report:
+  num_workers: 5
   llm:
     model: "gpt-5.2-chat-latest"
     endpoint: "/v1/chat/completions"

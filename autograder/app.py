@@ -5,12 +5,26 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from starlette.middleware.base import BaseHTTPMiddleware
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from autograder.config import get_config, get_assignment_path
+
+
+class NoCacheFilesMiddleware(BaseHTTPMiddleware):
+    """对 /files/ 下的资源禁用浏览器缓存，避免替换同路径图片后仍显示旧图。"""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/files/"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
 
 
 def create_app() -> FastAPI:
@@ -24,6 +38,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(NoCacheFilesMiddleware)
 
     from autograder.routers.pipeline import router as pipeline_router
     from autograder.routers.questions import router as questions_router

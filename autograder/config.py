@@ -52,6 +52,7 @@ class GradingConfig(BaseModel):
 class ReportConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     excel_out_path: str = ""
+    num_workers: int = Field(default=3, ge=1, le=16, description="并发生成报告的题目数")
 
 
 class AssignmentRegradeConfig(BaseModel):

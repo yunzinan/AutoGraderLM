@@ -10,6 +10,10 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- KaTeX 数学公式：使用 BootCDN 国内镜像（jsDelivr 在国内可能较慢或不可用） -->
+  <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.9/katex.min.css" crossorigin="anonymous" />
+  <script src="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.9/katex.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js" crossorigin="anonymous"></script>
   <script>
     tailwind.config = {
       theme: {
@@ -180,6 +184,9 @@
     .prose pre code { background: none; color: inherit; padding: 0; }
     .prose blockquote { border-left: 4px solid #94a3b8; padding-left: 1rem; margin: 0.6em 0; color: #475569; }
     .prose hr { border: none; border-top: 1px solid #e2e8f0; margin: 1em 0; }
+    .prose table { border-collapse: collapse; width: 100%; margin: 0.6em 0; font-size: 0.9em; }
+    .prose th, .prose td { border: 1px solid #cbd5e1; padding: 0.4em 0.6em; text-align: left; }
+    .prose th { background: #f1f5f9; font-weight: 600; color: #0f172a; }
     .prose a { color: #4f46e5; text-decoration: underline; }
     .prose a:hover { color: #4338ca; }
     .student-name-link {
@@ -1077,7 +1084,7 @@
           </div>
         </section>
 
-        <section v-if="page === 'report'" class="space-y-4">
+        <section v-if="page === 'report'" class="space-y-4" ref="reportSectionRef">
           <div class="panel p-5">
             <h3 class="text-lg font-bold text-slate-900">答题报告</h3>
             <p class="mt-1 text-sm text-slate-600">按题目查看得分分布与大模型归纳出的解题/失分分析。</p>
@@ -1115,6 +1122,13 @@
               </div>
             </div>
             <div class="prose max-w-none text-sm text-slate-700" v-html="renderReportMd(rpt.report_text, rpt.student_answers)" @click="onReportClick($event, rpt.student_answers)"></div>
+            <div v-if="rpt.reference_answer" class="mt-5 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 lg:p-5">
+              <div class="mb-3 flex items-center gap-2">
+                <span class="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500 text-xs font-bold text-white">A</span>
+                <h5 class="text-sm font-bold text-emerald-800">参考作答</h5>
+              </div>
+              <div class="prose max-w-none text-sm text-slate-700" v-html="renderMd(rpt.reference_answer)"></div>
+            </div>
           </div>
         </section>
       </main>
@@ -1167,6 +1181,7 @@ createApp({
     const rosterSortOrder = ref('asc');
     const summary = ref({});
     const reports = ref([]);
+    const reportSectionRef = ref(null);
     const fileInputRefs = {};
     // 人工重新切分
     const segmentEditorAssignments = ref([]);
@@ -1797,15 +1812,76 @@ createApp({
       return questions.value.find(q => q.qid === qid);
     }
 
+    function preprocessLatex(text) {
+      let s = String(text || '');
+      // 0. 移除单独成行的 \ 或 " \"（LLM 常在公式间输出）
+      s = s.replace(/\n\s*\\\s*\n/g, '\n\n');
+      // 1. 矩阵行末单反斜杠 \ 改为 \\（LaTeX 要求）；排除 \\ 换行（已是正确换行符）
+      s = s.replace(/(?<!\\)\\([\s]*)\n/g, '\\\\$1\n');
+      // 2. 修正 LLM 常见输出：\$$ → $$，\\\ → \\，\\] → \]、\\) → \)（公式结尾）
+      s = s.replace(/\\\$\$/g, '$$');
+      s = s.replace(/\\\\\\\s*/g, '\\\\');
+      // 2a. \\] 后跟空格+反斜杠：统一替换为 \]（支持 \\] \、\\]  \、\\] \\ 等）
+      s = s.replace(/\\\\\\]\s*\\+\s*(?=\s|$)/g, '\\]');
+      s = s.replace(/\\\\\\]\s*\\+\s*\n/g, '\\]\n');
+      s = s.replace(/\\\\\\]\s*\\+\s*(?=\s*\\\[)/g, '\\] ');
+      s = s.replace(/\\\\\\]\s*\\+\s*$/gm, '\\]');
+      s = s.replace(/\\\\\](?=\s*\n|\s*$)/g, '\\]');
+      s = s.replace(/\\\\\)/g, '\\)');
+      // 3. 将 [ \n ... \n ] 包裹的 LaTeX 块转为 $$ ... $$
+      s = s.replace(/\[\s*\n([\s\S]*?)\n\s*\]/g, (m, inner) => {
+        if (/\\begin\{|\\end\{|\\frac|\\sqrt|\\sum|\\int|\\left|\\right|\\quad|\\pmatrix|\\matrix/.test(inner)) {
+          return '$$\n' + inner + '\n$$';
+        }
+        return m;
+      });
+      // 4. 单行 [ ... ] 内若含 LaTeX 也转换
+      s = s.replace(/\[\s*([\s\S]*?)\s*\]/g, (m, inner) => {
+        if (/\\begin\{|\\end\{|\\frac|\\sqrt|\\quad|\\pmatrix/.test(inner)) {
+          return '$$' + inner + '$$';
+        }
+        return m;
+      });
+      return s;
+    }
+
     function renderMd(text) {
       if (typeof marked === 'undefined') return (text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
       try {
         marked.setOptions({ gfm: true, breaks: true });
         let raw = String(text || '').trim();
-        // 若 AI 用 ```markdown ... ``` 包裹整段，去掉外壳再解析
         const fence = raw.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/);
         if (fence) raw = fence[1].trim();
-        return raw ? marked.parse(raw) : '';
+        raw = preprocessLatex(raw);
+        // 保护数学块：用占位符替换，避免 marked 转义反斜杠（顺序：\[ \] 和 \( \) 优先于 $$ 和 $）
+        const mathBlocks = [];
+        raw = raw.replace(/\\\[([\s\S]*?)(?:\\\]|\\\\\])/g, (_, m) => {
+          const i = mathBlocks.length;
+          mathBlocks.push({ content: m, display: true });
+          return '\n\n<!--MATH' + i + '-->\n\n';
+        });
+        raw = raw.replace(/\\\(([\s\S]*?)(?:\\\)|\\\\\))/g, (_, m) => {
+          const i = mathBlocks.length;
+          mathBlocks.push({ content: m, display: false });
+          return '<!--MATH' + i + '-->';
+        });
+        raw = raw.replace(/\$\$([\s\S]*?)\$\$/g, (_, m) => {
+          const i = mathBlocks.length;
+          mathBlocks.push({ content: m, display: true });
+          return '\n\n<!--MATH' + i + '-->\n\n';
+        });
+        raw = raw.replace(/\$([^\$\n]+)\$/g, (_, m) => {
+          const i = mathBlocks.length;
+          mathBlocks.push({ content: m, display: false });
+          return '<!--MATH' + i + '-->';
+        });
+        let html = raw ? marked.parse(raw) : '';
+        mathBlocks.forEach((b, i) => {
+          const ph = '<!--MATH' + i + '-->';
+          const replacement = b.display ? '\\[' + b.content + '\\]' : '\\(' + b.content + '\\)';
+          html = html.split(ph).join(replacement);
+        });
+        return html;
       } catch {
         return (text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
       }
@@ -2153,6 +2229,36 @@ createApp({
     }
     function setSegmentImgRef(el, pageIdx) {}
 
+    function renderMathInReport() {
+      const fn = (typeof renderMathInElement === 'function' ? renderMathInElement : null) || (window && window.renderMathInElement);
+      const doRender = () => {
+        const el = reportSectionRef.value;
+        if (!el || !fn) return;
+        try {
+          fn(el, {
+            delimiters: [
+              { left: '$$', right: '$$', display: true },
+              { left: '$', right: '$', display: false },
+              { left: '\\[', right: '\\]', display: true },
+              { left: '\\(', right: '\\)', display: false }
+            ],
+            throwOnError: false
+          });
+        } catch (_) {}
+      };
+      Vue.nextTick(() => {
+        Vue.nextTick(() => {
+          doRender();
+          if (!fn) setTimeout(doRender, 200);
+          else setTimeout(doRender, 100);
+        });
+      });
+    }
+
+    watch([page, reports], () => {
+      if (page.value === 'report' && reports.value.length) renderMathInReport();
+    }, { deep: true });
+
     watch(anonymousMode, v => {
       try { localStorage.setItem('autograder_anonymous_mode', v ? 'true' : 'false'); } catch (_) {}
     });
@@ -2173,8 +2279,13 @@ createApp({
         await loadRoster();
         await loadSummary();
         await loadStudentList();
+        loadReports();
       }
-      if (p === 'report') await loadReports();
+      if (p === 'report') {
+        await loadReports();
+        await Vue.nextTick();
+        renderMathInReport();
+      }
       if (p === 'config') await loadQuestions();
       if (p === 'segment') {
         await loadOverviewAssignments();
@@ -2296,6 +2407,7 @@ createApp({
       ROSTER_SORTABLE_HEADERS,
       summary,
       reports,
+      reportSectionRef,
       addQuestion,
       saveQuestion,
       deleteQuestion,

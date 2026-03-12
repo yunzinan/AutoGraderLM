@@ -34,7 +34,17 @@ from autograder.routers.questions import load_all_questions
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
-def _reports_json_path() -> Path:
+def _reports_dir() -> Path:
+    """报告目录：results/reports/，下含 Q1/report.md、Q1/reference.md 等"""
+    return get_results_dir() / "reports"
+
+
+def _reports_meta_path() -> Path:
+    return _reports_dir() / "reports_meta.json"
+
+
+def _legacy_reports_json_path() -> Path:
+    """旧格式：question_reports.json（用于迁移）"""
     return get_results_dir() / "question_reports.json"
 
 
@@ -71,35 +81,80 @@ _report_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="report"
 
 
 def _load_reports_from_disk() -> list[QuestionReport]:
-    """Load question reports from disk so they persist across restarts."""
-    path = _reports_json_path()
-    if not path.exists():
-        return []
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        out: list[QuestionReport] = []
-        for d in raw:
-            dist = d.get("score_distribution") or {}
-            d = dict(d)
-            d["score_distribution"] = {int(k): v for k, v in dist.items()}
-            out.append(QuestionReport.model_validate(d))
-        return out
-    except Exception as e:
-        logger.warning("Failed to load persisted reports from %s: %s", path, e)
-        return []
+    """从磁盘加载报告：优先新格式（markdown + meta），否则从旧 question_reports.json 迁移。"""
+    meta_path = _reports_meta_path()
+    legacy_path = _legacy_reports_json_path()
+
+    # 1. 新格式：reports/reports_meta.json + reports/{qid}/report.md, reference.md
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            reports_dir = _reports_dir()
+            out: list[QuestionReport] = []
+            for d in meta:
+                qid = d.get("qid", "")
+                qdir = reports_dir / qid
+                report_text = (qdir / "report.md").read_text(encoding="utf-8") if (qdir / "report.md").exists() else ""
+                ref_path = qdir / "reference.md"
+                reference_answer = ref_path.read_text(encoding="utf-8") if ref_path.exists() else ""
+                dist = d.get("score_distribution") or {}
+                out.append(QuestionReport(
+                    qid=qid,
+                    question_index=d.get("question_index"),
+                    score_distribution={int(k): v for k, v in dist.items()},
+                    report_text=report_text,
+                    reference_answer=reference_answer,
+                    student_answers=d.get("student_answers") or {},
+                ))
+            return out
+        except Exception as e:
+            logger.warning("Failed to load reports from %s: %s", meta_path, e)
+            return []
+
+    # 2. 旧格式：迁移并保存为新格式
+    if legacy_path.exists():
+        try:
+            raw = json.loads(legacy_path.read_text(encoding="utf-8"))
+            out: list[QuestionReport] = []
+            for d in raw:
+                dist = d.get("score_distribution") or {}
+                d = dict(d)
+                d["score_distribution"] = {int(k): v for k, v in dist.items()}
+                out.append(QuestionReport.model_validate(d))
+            if out:
+                _save_reports_to_disk(out)
+                logger.info("Migrated reports from legacy JSON to markdown format")
+            return out
+        except Exception as e:
+            logger.warning("Failed to load/migrate from %s: %s", legacy_path, e)
+            return []
+
+    return []
 
 
 def _save_reports_to_disk(reports: list[QuestionReport]) -> None:
-    """Persist question reports to disk."""
+    """持久化报告为 markdown 文件 + 元数据 JSON。"""
     try:
-        results_dir = get_results_dir()
-        results_dir.mkdir(parents=True, exist_ok=True)
-        _reports_json_path().write_text(
-            json.dumps([r.model_dump() for r in reports], ensure_ascii=False, indent=2),
+        reports_dir = _reports_dir()
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        meta: list[dict] = []
+        for r in reports:
+            qdir = reports_dir / r.qid
+            qdir.mkdir(parents=True, exist_ok=True)
+            (qdir / "report.md").write_text(r.report_text or "", encoding="utf-8")
+            (qdir / "reference.md").write_text(r.reference_answer or "", encoding="utf-8")
+            meta.append({
+                "qid": r.qid,
+                "question_index": r.question_index,
+                "score_distribution": r.score_distribution,
+                "student_answers": r.student_answers,
+            })
+        _reports_meta_path().write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     except Exception as e:
-        logger.warning("Failed to save reports to %s: %s", _reports_json_path(), e)
+        logger.warning("Failed to save reports to %s: %s", _reports_dir(), e)
 
 
 def _update_status_sync(msg: str, current: int, total: int) -> None:
