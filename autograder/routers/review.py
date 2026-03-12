@@ -71,10 +71,21 @@ def get_review_item(filename_stem: str, qid: str) -> dict:
     return {"error": f"未找到 {qid} 的评阅记录"}
 
 
-def _should_include_in_review(record_score: int, qid: str, confidence: int, question_scores: dict[str, int], ratio: float) -> bool:
-    """是否纳入人工复核：置信度 <= 2，或得分 <= ratio * 题目总分。"""
+def _should_include_in_review(
+    record_score: int,
+    qid: str,
+    confidence: int,
+    grader: str,
+    question_scores: dict[str, int],
+    ratio: float,
+) -> bool:
+    """是否纳入人工复核：置信度 <= 2，或（由大模型评阅且得分 <= ratio * 题目总分）。
+    仅当 grader 非 human 时，低分才纳入，避免人工确认提交后再次进入列表造成死循环。"""
     if confidence <= 2:
         return True
+    # 低分纳入仅针对「大模型评阅」的作答，人工复核后不再因低分重复进入
+    if grader == "human":
+        return False
     full_score = question_scores.get(qid)
     if full_score is None or full_score <= 0:
         return False
@@ -96,7 +107,7 @@ def get_review_items() -> list[dict]:
     for sr in results:
         file_stem = stem_norm(Path(sr.filename).stem)
         for r in sr.records:
-            if _should_include_in_review(r.score, r.qid, r.confidence, question_scores, ratio):
+            if _should_include_in_review(r.score, r.qid, r.confidence, r.grader or "", question_scores, ratio):
                 answer_paths = _get_answer_paths_from_disk(file_stem, r.qid)
                 items.append({
                     "filename": sr.filename,
