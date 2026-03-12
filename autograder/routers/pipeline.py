@@ -23,7 +23,7 @@ from autograder.pipeline.grading import (
     load_student_result,
     run_grading,
 )
-from autograder.pipeline.report import generate_all_reports, run_report_sync
+from autograder.pipeline.report import generate_all_reports, generate_question_report_sync, run_report_sync
 from autograder.pipeline.segmentation import (
     apply_manual_segments,
     load_segments_for_stem,
@@ -438,6 +438,86 @@ async def start_report_generation() -> dict:
 
     _running_task = asyncio.create_task(_wait_and_finish())
     return {"ok": True}
+
+
+@router.post("/report/one")
+async def start_report_generation_one(body: dict = Body(...)) -> dict:
+    """仅重新生成指定题目的报告。"""
+    global _running_task, _reports
+    qid = (body.get("qid") or "").strip()
+    if not qid:
+        return {"error": "请提供 qid"}
+
+    with _status_lock:
+        if _status.stage not in ("idle", "done", "error"):
+            return {"error": f"Pipeline already running: {_status.stage}"}
+        _status.stage = "report"
+        _status.message = f"正在重新生成报告：{qid}"
+        _status.current = 0
+        _status.total = 1
+        _status.errors = []
+
+    questions = load_all_questions()
+    q = next((x for x in questions if x.qid == qid), None)
+    if q is None:
+        with _status_lock:
+            _status.stage = "error"
+            _status.errors.append(f"未找到题目：{qid}")
+        return {"error": f"未找到题目：{qid}"}
+
+    cfg = get_config()
+    results = load_all_results()
+    if not results:
+        with _status_lock:
+            _status.stage = "error"
+            _status.errors.append("没有找到评分结果，请先运行评分")
+        return {"error": "没有找到评分结果，请先运行评分"}
+
+    def _run_one_in_thread() -> tuple[QuestionReport | None, str | None]:
+        try:
+            report = generate_question_report_sync(cfg, q, results)
+            return (report, None)
+        except Exception as e:
+            logger.exception("Single report generation failed for %s", qid)
+            return (None, str(e))
+
+    loop = asyncio.get_event_loop()
+
+    async def _wait_and_finish():
+        global _reports
+        future = loop.run_in_executor(_report_executor, _run_one_in_thread)
+        report, err = await future
+        with _status_lock:
+            if err:
+                _status.stage = "error"
+                _status.errors.append(err)
+                return
+            if not report:
+                _status.stage = "error"
+                _status.errors.append(f"{qid} 报告生成失败")
+                return
+
+            if not _reports:
+                _reports = _load_reports_from_disk()
+            replaced = False
+            for i, rpt in enumerate(_reports):
+                if rpt.qid == qid:
+                    _reports[i] = report
+                    replaced = True
+                    break
+            if not replaced:
+                _reports.append(report)
+
+            # 按题目配置顺序排序，保证前端展示稳定
+            order = {qq.qid: idx for idx, qq in enumerate(questions)}
+            _reports.sort(key=lambda r: order.get(r.qid, 10**9))
+            _save_reports_to_disk(_reports)
+            _status.current = 1
+            _status.stage = "done"
+            _status.message = f"{qid} 报告重新生成完成"
+
+    _running_task = asyncio.create_task(_wait_and_finish())
+    return {"ok": True, "qid": qid}
 
 
 @router.get("/answer_map")

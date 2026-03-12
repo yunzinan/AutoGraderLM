@@ -97,6 +97,12 @@
       opacity: 0.55;
       cursor: not-allowed;
     }
+    .btn-bordered {
+      border: 1px solid #cbd5e1;
+    }
+    .btn-bordered:hover:not(:disabled) {
+      border-color: #94a3b8;
+    }
     .btn-primary {
       background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
       color: #fff;
@@ -1093,7 +1099,15 @@
             暂无报告，请先在评分统计页面生成报告。
           </div>
           <div v-for="rpt in reports" :key="rpt.qid" class="panel p-4 lg:p-5">
-            <h4 class="mb-4 text-base font-bold text-slate-900">{{ rpt.qid }}{{ rpt.question_index != null ? '（习题集序号 ' + rpt.question_index + '）' : '' }} 答题报告</h4>
+            <div class="mb-4 flex items-start justify-between gap-3">
+              <h4 class="text-base font-bold text-slate-900">{{ rpt.qid }}{{ rpt.question_index != null ? '（习题集序号 ' + rpt.question_index + '）' : '' }} 答题报告</h4>
+              <button
+                class="btn btn-ghost btn-bordered px-3 py-1.5 text-xs"
+                :disabled="isPipelineBusy || regeneratingReportQid === rpt.qid"
+                @click="runReportOne(rpt.qid)">
+                {{ regeneratingReportQid === rpt.qid ? '重新生成中…' : '重新生成' }}
+              </button>
+            </div>
             <!-- 题目信息：题干、题目图、评分标准 -->
             <div v-if="getQuestionByQid(rpt.qid)" class="mb-4 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
               <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">题目信息</p>
@@ -1181,6 +1195,7 @@ createApp({
     const rosterSortOrder = ref('asc');
     const summary = ref({});
     const reports = ref([]);
+    const regeneratingReportQid = ref('');
     const reportSectionRef = ref(null);
     const fileInputRefs = {};
     // 人工重新切分
@@ -1671,6 +1686,7 @@ createApp({
             await loadReports();
             await loadRoster();
             await loadSummary();
+            regeneratingReportQid.value = '';
           }
         }
       }, 1500);
@@ -1725,6 +1741,27 @@ createApp({
       });
       if (res && res.error) {
         showToast(res.error, 'error');
+        await loadStatus();
+        return;
+      }
+      await loadStatus();
+      startStatusPolling();
+    }
+    async function runReportOne(qid) {
+      const targetQid = String(qid || '').trim();
+      if (!targetQid) return;
+      if (pollTimer) clearInterval(pollTimer);
+      lastAction.value = 'report';
+      regeneratingReportQid.value = targetQid;
+      await api('/api/pipeline/reset', { method: 'POST' });
+      const res = await api('/api/pipeline/report/one', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ qid: targetQid })
+      });
+      if (res && res.error) {
+        showToast(res.error, 'error');
+        regeneratingReportQid.value = '';
         await loadStatus();
         return;
       }
@@ -2371,6 +2408,7 @@ createApp({
       filteredStudentList,
       runSegmentOne,
       runGradeOne,
+      runReportOne,
       anonymousMode,
       maskSensitive,
       maskRosterCell,
@@ -2428,6 +2466,7 @@ createApp({
       ROSTER_SORTABLE_HEADERS,
       summary,
       reports,
+      regeneratingReportQid,
       reportSectionRef,
       addQuestion,
       saveQuestion,

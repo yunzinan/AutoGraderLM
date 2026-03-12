@@ -317,6 +317,15 @@ def _generate_question_report_sync(
     return _generate_report_two_step(cfg, question, results)
 
 
+def generate_question_report_sync(
+    cfg: AppConfig,
+    question: QuestionConfig,
+    results: list[StudentResult],
+) -> QuestionReport:
+    """公开的单题同步报告生成接口。"""
+    return _generate_question_report_sync(cfg, question, results)
+
+
 def run_report_sync(
     cfg: AppConfig,
     questions: list[QuestionConfig],
