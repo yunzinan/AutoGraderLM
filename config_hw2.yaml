@@ -27,6 +27,10 @@ assignment_grading:
     model: "gpt-5.2-chat-latest"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/grading.jinja"
+  
+# 全量评分后：得分 <= 该比例 × 题目总分的作答自动进入人工复核列表
+assignment_regrade:
+  add_to_regrade_when_below: 0.20
 
 
 assignment_report:

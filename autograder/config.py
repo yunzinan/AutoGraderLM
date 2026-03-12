@@ -54,6 +54,11 @@ class ReportConfig(BaseModel):
     excel_out_path: str = ""
 
 
+class AssignmentRegradeConfig(BaseModel):
+    """全量评分后，得分 <= ratio * 题目总分的作答自动进入人工复核列表。"""
+    add_to_regrade_when_below: float = Field(default=0.2, ge=0.0, le=1.0)
+
+
 class LlmLogConfig(BaseModel):
     """大模型对话日志，用于后台调试。"""
     enabled: bool = False
@@ -67,6 +72,7 @@ class AppConfig(BaseModel):
     assignment_configuration: AssignmentConfigSection = Field(default_factory=AssignmentConfigSection)
     assignment_segmentation: SegmentationConfig = Field(default_factory=SegmentationConfig)
     assignment_grading: GradingConfig = Field(default_factory=GradingConfig)
+    assignment_regrade: AssignmentRegradeConfig = Field(default_factory=AssignmentRegradeConfig)
     assignment_report: ReportConfig = Field(default_factory=ReportConfig)
     llm_log: LlmLogConfig = Field(default_factory=LlmLogConfig)
 
@@ -125,6 +131,10 @@ def load_config(path: Path | str | None = None) -> AppConfig:
     if "excel_out_path" in ar:
         ar["excel_out_path"] = _resolve_under_assignment(assignment_base, ar["excel_out_path"])
     raw["assignment_report"] = ar
+    # 兼容拼写：assignmetn_regrade -> assignment_regrade
+    regrade = raw.get("assignment_regrade") or raw.get("assignmetn_regrade")
+    if regrade is not None:
+        raw["assignment_regrade"] = regrade
     cfg = AppConfig(**raw)
     for llm_cfg in (
         cfg.assignment_segmentation.llm,

@@ -8,9 +8,10 @@ from pathlib import Path
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from autograder.config import get_answers_dir, get_results_dir
+from autograder.config import get_config, get_answers_dir, get_results_dir
 from autograder.models import StudentResult, _now_iso
 from autograder.pipeline.grading import load_all_results, load_student_result
+from autograder.routers.questions import load_all_questions
 
 router = APIRouter(prefix="/api/review", tags=["review"])
 
@@ -70,17 +71,32 @@ def get_review_item(filename_stem: str, qid: str) -> dict:
     return {"error": f"未找到 {qid} 的评阅记录"}
 
 
+def _should_include_in_review(record_score: int, qid: str, confidence: int, question_scores: dict[str, int], ratio: float) -> bool:
+    """是否纳入人工复核：置信度 <= 2，或得分 <= ratio * 题目总分。"""
+    if confidence <= 2:
+        return True
+    full_score = question_scores.get(qid)
+    if full_score is None or full_score <= 0:
+        return False
+    threshold = ratio * full_score
+    return record_score <= threshold
+
+
 @router.get("")
 def get_review_items() -> list[dict]:
-    """Return all grading records with confidence <= 2, grouped for review.
-    作答图片路径从磁盘 answers 目录读取，与 get_review_item 一致。"""
+    """返回需人工复核的评阅记录：置信度 <= 2，或得分 <= (add_to_regrade_when_below * 题目总分)。
+    全量评分完成后，低分作答会自动出现在本列表中。作答图片路径从磁盘 answers 目录读取。"""
     results = load_all_results()
+    questions = load_all_questions()
+    question_scores = {q.qid: q.score for q in questions}
+    cfg = get_config()
+    ratio = cfg.assignment_regrade.add_to_regrade_when_below
     items = []
     stem_norm = _normalize_stem
     for sr in results:
         file_stem = stem_norm(Path(sr.filename).stem)
         for r in sr.records:
-            if r.confidence <= 2:
+            if _should_include_in_review(r.score, r.qid, r.confidence, question_scores, ratio):
                 answer_paths = _get_answer_paths_from_disk(file_stem, r.qid)
                 items.append({
                     "filename": sr.filename,
