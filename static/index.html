@@ -350,9 +350,10 @@
             <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h3 class="text-lg font-bold text-slate-900">作业配置</h3>
-                <p class="mt-1 text-sm text-slate-600">配置题干、分值、评分标准与参考答案，保存至题库目录。</p>
+                <p class="mt-1 text-sm text-slate-600">配置题干、分值、评分标准与参考答案；修改后自动保存至题库目录。</p>
               </div>
               <div class="flex items-center gap-3">
+                <span v-if="configAutoSaveBusy" class="text-xs font-medium text-brand-600">保存中…</span>
                 <div class="rounded-xl bg-slate-50 px-4 py-3 text-center">
                   <p class="text-xs text-slate-500">题目数</p>
                   <p class="mt-1 text-2xl font-bold text-slate-900">{{ questions.length }}</p>
@@ -457,10 +458,6 @@
                   />
                 </div>
               </div>
-            </div>
-
-            <div class="mt-4 flex justify-end">
-              <button class="btn btn-primary" @click="saveQuestion(q)">保存题目配置</button>
             </div>
           </div>
         </section>
@@ -790,6 +787,7 @@
             </div>
             <div class="mt-4 flex justify-end gap-2 flex-wrap">
               <button type="button" class="btn btn-secondary" @click="goToResegmentFor(reviewTargetItem.filename, reviewTargetItem.qid)" title="跳转到人工切分界面并加载该作业">重新切分</button>
+              <button type="button" class="btn btn-secondary" @click="setReviewItemToFullScore(reviewTargetItem)" :disabled="!getQuestionByQid(reviewTargetItem.qid)" title="将该题作答分数设为满分并清空评语">改为满分</button>
               <button type="button" class="btn btn-secondary" @click="regradeQuestion(reviewTargetItem.filename, reviewTargetItem.qid)" :disabled="regradingQid === reviewTargetItem.qid" title="对该题重新 AI 评阅">
                 {{ regradingQid === reviewTargetItem.qid ? '评阅中…' : 'AI重新评阅' }}
               </button>
@@ -869,6 +867,7 @@
             </div>
             <div class="mt-4 flex justify-end gap-2 flex-wrap">
               <button type="button" class="btn btn-secondary" @click="goToResegmentFor(item.filename, item.qid)" title="跳转到人工切分界面并加载该作业">重新切分</button>
+              <button type="button" class="btn btn-secondary" @click="setReviewItemToFullScore(item)" :disabled="!getQuestionByQid(item.qid)" title="将该题作答分数设为满分并清空评语">改为满分</button>
               <button type="button" class="btn btn-secondary" @click="regradeQuestion(item.filename, item.qid)" :disabled="regradingQid === item.qid" title="对该题重新 AI 评阅">
                 {{ regradingQid === item.qid ? '评阅中…' : 'AI重新评阅' }}
               </button>
@@ -1162,14 +1161,14 @@
 </div>
 
 <script>
-const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch } = Vue;
+const { createApp, ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } = Vue;
 
 createApp({
   setup() {
     const page = ref('config');
     const navItems = [
       { id: 'overview', icon: '0', label: '作业概览', desc: '应交/已提交/已切分/已评阅份数及每份作业状态。' },
-      { id: 'config', icon: '1', label: '作业配置', desc: '配置题目、评分标准与示例答案，支持文本和图片。' },
+      { id: 'config', icon: '1', label: '作业配置', desc: '配置题目、评分标准与示例答案（修改后自动保存），支持文本和图片。' },
       { id: 'segment', icon: '2', label: '作业解析', desc: '读取 PDF 并按题目切分作答区域，生成题目图片。' },
       { id: 'grade', icon: '3', label: '作业评分', desc: '按题目自动评分并执行置信度驱动的重试策略。' },
       { id: 'review', icon: '4', label: '人工复核', desc: '对低置信度样本进行人工修正并回写结果。' },
@@ -1181,6 +1180,11 @@ createApp({
     const anonymousMode = ref(localStorage.getItem('autograder_anonymous_mode') === 'true');
     const configData = ref({});
     const questions = ref([]);
+    const configAutoSaveBusy = ref(false);
+    let suppressQuestionConfigWatch = false;
+    let lastQuestionConfigSnapshot = {};
+    let configAutoSaveChain = Promise.resolve();
+    let configAutoSaveDebounceTimer = null;
     const status = reactive({ stage: 'idle', message: '', current: 0, total: 0, errors: [] });
     const lastAction = ref('');
     const reviewItems = ref([]);
@@ -1596,8 +1600,80 @@ createApp({
     async function loadConfig() {
       configData.value = await api('/api/config');
     }
+
+    function buildQuestionPostBody(q) {
+      const idx = q.question_index;
+      const questionIndex = (idx != null && idx !== '' && !Number.isNaN(Number(idx))) ? Number(idx) : null;
+      return { ...q, question_index: questionIndex };
+    }
+
+    function snapshotQuestionConfig(q) {
+      return JSON.stringify(buildQuestionPostBody(q));
+    }
+
+    async function persistQuestion(q, { silent = false } = {}) {
+      const res = await api(`/api/questions/${q.qid}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildQuestionPostBody(q))
+      });
+      if (res.error) {
+        if (!silent) showToast(res.error || '保存失败', 'error');
+        return res;
+      }
+      if (!silent) {
+        showToast('保存成功');
+        await loadQuestions();
+      }
+      return res;
+    }
+
+    async function flushQuestionConfigAutoSave(force = false) {
+      if (!force && page.value !== 'config') return;
+      const list = questions.value;
+      const pending = [];
+      for (const q of list) {
+        const snap = snapshotQuestionConfig(q);
+        if (lastQuestionConfigSnapshot[q.qid] !== snap) pending.push(q);
+      }
+      if (!pending.length) return;
+      configAutoSaveBusy.value = true;
+      try {
+        for (const q of pending) {
+          const snap = snapshotQuestionConfig(q);
+          if (lastQuestionConfigSnapshot[q.qid] === snap) continue;
+          const res = await persistQuestion(q, { silent: true });
+          if (res.error) continue;
+          lastQuestionConfigSnapshot[q.qid] = snapshotQuestionConfig(q);
+        }
+      } finally {
+        configAutoSaveBusy.value = false;
+      }
+    }
+
+    function scheduleQuestionConfigAutoSave() {
+      if (suppressQuestionConfigWatch) return;
+      if (page.value !== 'config') return;
+      clearTimeout(configAutoSaveDebounceTimer);
+      configAutoSaveDebounceTimer = setTimeout(() => {
+        configAutoSaveDebounceTimer = null;
+        configAutoSaveChain = configAutoSaveChain.then(() => flushQuestionConfigAutoSave()).catch(() => {});
+      }, 450);
+    }
+
     async function loadQuestions() {
-      questions.value = await api('/api/questions');
+      suppressQuestionConfigWatch = true;
+      try {
+        questions.value = await api('/api/questions');
+        const next = {};
+        for (const q of questions.value) {
+          next[q.qid] = snapshotQuestionConfig(q);
+        }
+        lastQuestionConfigSnapshot = next;
+      } finally {
+        await nextTick();
+        suppressQuestionConfigWatch = false;
+      }
     }
     async function loadStatus() {
       Object.assign(status, await api('/api/pipeline/status'));
@@ -1640,18 +1716,6 @@ createApp({
         question_images: [],
         example_answer_images: []
       });
-    }
-
-    async function saveQuestion(q) {
-      const idx = q.question_index;
-      const questionIndex = (idx != null && idx !== '' && !Number.isNaN(Number(idx))) ? Number(idx) : null;
-      const res = await api(`/api/questions/${q.qid}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...q, question_index: questionIndex })
-      });
-      if (res.error) showToast(res.error || '保存失败', 'error');
-      else { showToast('保存成功'); await loadQuestions(); }
     }
 
     async function deleteQuestion(qid) {
@@ -1859,6 +1923,22 @@ createApp({
 
     function getQuestionByQid(qid) {
       return questions.value.find(q => q.qid === qid);
+    }
+
+    function setReviewItemToFullScore(item) {
+      if (!item) return;
+      const q = getQuestionByQid(item.qid);
+      if (!q || q.score == null || q.score === '') {
+        showToast('未找到该题配置或满分', 'error');
+        return;
+      }
+      const full = Number(q.score);
+      if (!Number.isFinite(full)) {
+        showToast('题目满分无效', 'error');
+        return;
+      }
+      item.score = full;
+      item.comments = '';
     }
 
     function preprocessLatex(text) {
@@ -2371,7 +2451,20 @@ createApp({
     watch(anonymousMode, v => {
       try { localStorage.setItem('autograder_anonymous_mode', v ? 'true' : 'false'); } catch (_) {}
     });
-    watch(page, async p => {
+
+    watch(questions, () => {
+      if (suppressQuestionConfigWatch) return;
+      if (page.value !== 'config') return;
+      scheduleQuestionConfigAutoSave();
+    }, { deep: true });
+
+    watch(page, async (p, prev) => {
+      if (prev === 'config' && p !== 'config') {
+        clearTimeout(configAutoSaveDebounceTimer);
+        configAutoSaveDebounceTimer = null;
+        await configAutoSaveChain;
+        await flushQuestionConfigAutoSave(true);
+      }
       if (p === 'overview') {
         await loadOverview();
         await loadOverviewAssignments();
@@ -2436,6 +2529,8 @@ createApp({
       document.addEventListener('keydown', onSegmentEditorKeydown);
     });
     onUnmounted(() => {
+      clearTimeout(configAutoSaveDebounceTimer);
+      void configAutoSaveChain.then(() => flushQuestionConfigAutoSave());
       document.removeEventListener('keydown', onSegmentEditorKeydown);
     });
 
@@ -2522,7 +2617,7 @@ createApp({
       exportingReportPdf,
       exportReportPdf,
       addQuestion,
-      saveQuestion,
+      configAutoSaveBusy,
       deleteQuestion,
       uploadImage,
       uploadImageBlob,
@@ -2537,6 +2632,7 @@ createApp({
       confidenceBadge,
       formatGradedAt,
       getQuestionByQid,
+      setReviewItemToFullScore,
       renderMd,
       renderReportMd,
       studentPopup,

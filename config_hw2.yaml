@@ -15,7 +15,7 @@ assignment_segmentation:
   num_workers: 10
   max_retry: 3
   llm: 
-    model: "gpt-5.2-chat-latest"
+    model: "gpt-5.4"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/segmentation.jinja"
   
@@ -24,7 +24,7 @@ assignment_grading:
   num_workers: 10
   max_retry: 3
   llm: 
-    model: "gpt-5.2-chat-latest"
+    model: "gpt-5.4"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/grading.jinja"
   
@@ -36,7 +36,7 @@ assignment_regrade:
 assignment_report:
   num_workers: 5
   llm:
-    model: "gpt-5.2-chat-latest"
+    model: "gpt-5.4"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/report.jinja"
   excel_out_path: "out.xls"
