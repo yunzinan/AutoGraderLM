@@ -245,7 +245,52 @@ def _step2_refine_with_images(
     if remaining.strip():
         segments.append((remaining, []))
 
-    msg = build_vision_message_segmented(segments)
+    # 超限降级策略：
+    # - 按顺序保留前 vision_max_images 张
+    # - 跳过超大图和不存在文件
+    # 这样可在超限时继续执行 step2，而不是整步回退到 step1。
+    max_images = report_cfg.vision_max_images
+    max_bytes = report_cfg.vision_max_image_bytes
+    kept = 0
+    skipped_missing = 0
+    skipped_oversize = 0
+    skipped_overcount = 0
+    filtered_segments: list[tuple[str, list[str]]] = []
+    for text, paths in segments:
+        kept_paths: list[str] = []
+        for p in paths or []:
+            path_obj = Path(p)
+            if not path_obj.exists():
+                skipped_missing += 1
+                continue
+            size = path_obj.stat().st_size
+            if size > max_bytes:
+                skipped_oversize += 1
+                continue
+            if kept >= max_images:
+                skipped_overcount += 1
+                continue
+            kept_paths.append(str(path_obj))
+            kept += 1
+        filtered_segments.append((text, kept_paths))
+
+    if skipped_missing or skipped_oversize or skipped_overcount:
+        logger.warning(
+            "Report step2 image filtering for %s: kept=%d, skipped_missing=%d, skipped_oversize=%d, skipped_overcount=%d, limits(max_images=%d, max_image_bytes=%d)",
+            question.qid,
+            kept,
+            skipped_missing,
+            skipped_oversize,
+            skipped_overcount,
+            max_images,
+            max_bytes,
+        )
+
+    msg = build_vision_message_segmented(
+        filtered_segments,
+        max_images=report_cfg.vision_max_images,
+        max_image_bytes=report_cfg.vision_max_image_bytes,
+    )
     llm = build_llm(report_cfg.llm)
     llm_bounded = llm.bind(max_tokens=4096)
     resp = invoke_with_log(llm_bounded, [msg], {"stage": "report-step2", "qid": question.qid})
@@ -272,18 +317,27 @@ def _generate_report_two_step(
 
     if mentioned:
         # Step 2
-        refined_output = _step2_refine_with_images(
-            cfg, question, initial_report, mentioned, enriched, student_abs_answers,
-        )
-        report_text, reference_answer = _split_report_and_reference(refined_output)
-        # 兜底：若 report 过短或缺少解题思路/常见错误，回退使用初步报告
-        if len(report_text.strip()) < 150 or ("解题思路" not in report_text and "常见错误" not in report_text):
+        try:
+            refined_output = _step2_refine_with_images(
+                cfg, question, initial_report, mentioned, enriched, student_abs_answers,
+            )
+            report_text, reference_answer = _split_report_and_reference(refined_output)
+            # 兜底：若 report 过短或缺少解题思路/常见错误，回退使用初步报告
+            if len(report_text.strip()) < 150 or ("解题思路" not in report_text and "常见错误" not in report_text):
+                logger.warning(
+                    "Refined report for %s too short or missing 解题思路/常见错误 (len=%d), falling back to initial report",
+                    question.qid,
+                    len(report_text.strip()),
+                )
+                report_text = initial_report
+        except ValueError as e:
             logger.warning(
-                "Refined report for %s too short or missing 解题思路/常见错误 (len=%d), falling back to initial report",
+                "Skip report step2 for %s due to image limits: %s. Falling back to step1 report.",
                 question.qid,
-                len(report_text.strip()),
+                e,
             )
             report_text = initial_report
+            reference_answer = ""
     else:
         logger.info("No student names found in initial report for %s, skipping step 2", question.qid)
         report_text = initial_report

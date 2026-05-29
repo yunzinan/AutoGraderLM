@@ -53,6 +53,13 @@ class ReportConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     excel_out_path: str = ""
     num_workers: int = Field(default=3, ge=1, le=16, description="并发生成报告的题目数")
+    vision_max_images: int = Field(default=50, ge=1, le=200, description="报告精修阶段最多提交给 LLM 的图片张数")
+    vision_max_image_bytes: int = Field(
+        default=6 * 1024 * 1024,
+        ge=64 * 1024,
+        le=50 * 1024 * 1024,
+        description="报告精修阶段单张图片最大字节数（默认 6MB）",
+    )
 
 
 class AssignmentRegradeConfig(BaseModel):
@@ -64,6 +71,10 @@ class LlmLogConfig(BaseModel):
     """大模型对话日志，用于后台调试。"""
     enabled: bool = False
     path: str = "./logs/llm_dialogue.log"
+    # 仅写入模型返回正文（含时间与上下文），每次写入后 flush，便于 tail -f 实时查看
+    response_path: str = ""
+    # 是否在每次写入后 fsync（更实时落盘，高并发时略慢）
+    fsync: bool = False
 
 
 class AppConfig(BaseModel):

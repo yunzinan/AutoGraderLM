@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from pathlib import Path
 
@@ -14,6 +15,15 @@ from autograder.pipeline.grading import load_all_results, load_student_result
 from autograder.routers.questions import load_all_questions
 
 router = APIRouter(prefix="/api/review", tags=["review"])
+_ANSWER_FILE_RE = re.compile(r"^(?P<qid>.+)-(?P<idx>\d+)\.png$", re.IGNORECASE)
+
+
+def _answer_file_sort_key(path: Path) -> tuple[str, int, str]:
+    """按 qid + 数字序号排序，避免 10 被排在 2 前。"""
+    match = _ANSWER_FILE_RE.match(path.name)
+    if match:
+        return (match.group("qid"), int(match.group("idx")), path.name)
+    return (path.stem, 10**9, path.name)
 
 
 def _normalize_stem(s: str) -> str:
@@ -40,7 +50,7 @@ def _get_answer_paths_from_disk(stem: str, qid: str) -> list[str]:
     stem_dir = _resolve_stem_dir(stem)
     if not stem_dir or not stem_dir.is_dir():
         return []
-    files = sorted(stem_dir.glob(f"{qid}-*.png"), key=lambda f: f.name)
+    files = sorted(stem_dir.glob(f"{qid}-*.png"), key=_answer_file_sort_key)
     return [f"answers/{stem_dir.name}/{f.name}" for f in files]
 
 

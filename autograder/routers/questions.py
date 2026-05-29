@@ -77,11 +77,17 @@ class QuestionUpdate(BaseModel):
     rubric: str = ""
     question_text: str = ""
     example_answer_text: str = ""
+    question_images: Optional[list[str]] = None
+    example_answer_images: Optional[list[str]] = None
 
 
 @router.post("/{qid}")
 def upsert_question(qid: str, body: QuestionUpdate) -> QuestionConfig:
     existing = _load_config(qid)
+    question_images = body.question_images if body.question_images is not None else (existing.question_images if existing else [])
+    example_answer_images = (
+        body.example_answer_images if body.example_answer_images is not None else (existing.example_answer_images if existing else [])
+    )
     q = QuestionConfig(
         qid=qid,
         question_index=body.question_index,
@@ -89,8 +95,8 @@ def upsert_question(qid: str, body: QuestionUpdate) -> QuestionConfig:
         rubric=body.rubric,
         question_text=body.question_text,
         example_answer_text=body.example_answer_text,
-        question_images=existing.question_images if existing else [],
-        example_answer_images=existing.example_answer_images if existing else [],
+        question_images=[_normalize_image_path(p, qid) for p in (question_images or [])],
+        example_answer_images=[_normalize_image_path(p, qid) for p in (example_answer_images or [])],
     )
     _save_config(q)
     return q

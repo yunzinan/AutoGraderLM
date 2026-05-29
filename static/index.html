@@ -406,6 +406,9 @@
                 <div class="mb-3 flex flex-wrap gap-2">
                   <div v-for="(img, idx) in q.question_images" :key="idx" class="relative inline-block group">
                     <img :src="'/files/' + img" class="h-24 rounded-lg border border-slate-200 bg-white object-contain p-1" />
+                    <button type="button" class="absolute top-1 left-1 rounded-full bg-red-500/85 hover:bg-red-600 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="removeConfigImage(q, 'question', idx)" title="删除该图片">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
                     <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
                       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
                     </button>
@@ -435,6 +438,9 @@
                 <div class="mb-3 flex flex-wrap gap-2">
                   <div v-for="(img, idx) in q.example_answer_images" :key="idx" class="relative inline-block group">
                     <img :src="'/files/' + img" class="h-24 rounded-lg border border-slate-200 bg-white object-contain p-1" />
+                    <button type="button" class="absolute top-1 left-1 rounded-full bg-red-500/85 hover:bg-red-600 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="removeConfigImage(q, 'example', idx)" title="删除该图片">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
                     <button type="button" class="absolute top-1 right-1 rounded-full bg-black/50 hover:bg-black/70 text-white p-1.5 opacity-0 group-hover:opacity-100 transition-opacity" @click.stop="openImageFullscreen('/files/' + img)" title="放大">
                       <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
                     </button>
@@ -708,11 +714,17 @@
                 <h3 class="text-lg font-bold text-slate-900">人工复核</h3>
                 <p class="mt-1 text-sm text-slate-600">集中处理低置信度作答，支持人工修正分数与评语。</p>
               </div>
-              <div class="rounded-xl px-4 py-3 text-center" :class="reviewItems.length ? 'bg-amber-50' : 'bg-slate-50'">
-                <p class="text-xs text-slate-500">待处理</p>
-                <p class="mt-1 text-2xl font-bold" :class="reviewItems.length ? 'text-amber-600' : 'text-slate-900'">{{ reviewItems.length }}</p>
+              <div class="flex flex-col items-stretch gap-2 sm:items-end">
+                <div class="rounded-xl px-4 py-3 text-center" :class="reviewItems.length ? 'bg-amber-50' : 'bg-slate-50'">
+                  <p class="text-xs text-slate-500">待处理</p>
+                  <p class="mt-1 text-2xl font-bold" :class="reviewItems.length ? 'text-amber-600' : 'text-slate-900'">{{ reviewItems.length }}</p>
+                </div>
+                <button type="button" class="btn btn-secondary w-full sm:w-auto" @click="regradeAllPendingReviewItems" :disabled="!reviewItems.length || isBatchRegrading || isGradingBusy || isSegmentBusy || isReportBusy" title="依次对当前所有待处理题目调用 AI 重新评阅">
+                  {{ isBatchRegrading ? `批量重评中（${batchRegradeDone}/${batchRegradeTotal}）` : '一键AI重评所有待处理题目' }}
+                </button>
               </div>
             </div>
+            <p v-if="isBatchRegrading && batchRegradeProgressText" class="mt-2 text-sm text-slate-500">{{ batchRegradeProgressText }}</p>
           </div>
 
           <div v-if="!reviewItems.length && !reviewTargetItem" class="panel p-10 text-center text-slate-500">
@@ -788,7 +800,7 @@
             <div class="mt-4 flex justify-end gap-2 flex-wrap">
               <button type="button" class="btn btn-secondary" @click="goToResegmentFor(reviewTargetItem.filename, reviewTargetItem.qid)" title="跳转到人工切分界面并加载该作业">重新切分</button>
               <button type="button" class="btn btn-secondary" @click="setReviewItemToFullScore(reviewTargetItem)" :disabled="!getQuestionByQid(reviewTargetItem.qid)" title="将该题作答分数设为满分并清空评语">改为满分</button>
-              <button type="button" class="btn btn-secondary" @click="regradeQuestion(reviewTargetItem.filename, reviewTargetItem.qid)" :disabled="regradingQid === reviewTargetItem.qid" title="对该题重新 AI 评阅">
+              <button type="button" class="btn btn-secondary" @click="regradeQuestion(reviewTargetItem.filename, reviewTargetItem.qid)" :disabled="isBatchRegrading || regradingQid === reviewTargetItem.qid" title="对该题重新 AI 评阅">
                 {{ regradingQid === reviewTargetItem.qid ? '评阅中…' : 'AI重新评阅' }}
               </button>
               <button type="button" class="btn btn-secondary" @click="reviewTargetItem = null; reviewTargetStem = ''; reviewTargetQid = ''">关闭</button>
@@ -868,7 +880,7 @@
             <div class="mt-4 flex justify-end gap-2 flex-wrap">
               <button type="button" class="btn btn-secondary" @click="goToResegmentFor(item.filename, item.qid)" title="跳转到人工切分界面并加载该作业">重新切分</button>
               <button type="button" class="btn btn-secondary" @click="setReviewItemToFullScore(item)" :disabled="!getQuestionByQid(item.qid)" title="将该题作答分数设为满分并清空评语">改为满分</button>
-              <button type="button" class="btn btn-secondary" @click="regradeQuestion(item.filename, item.qid)" :disabled="regradingQid === item.qid" title="对该题重新 AI 评阅">
+              <button type="button" class="btn btn-secondary" @click="regradeQuestion(item.filename, item.qid)" :disabled="isBatchRegrading || regradingQid === item.qid" title="对该题重新 AI 评阅">
                 {{ regradingQid === item.qid ? '评阅中…' : 'AI重新评阅' }}
               </button>
               <button class="btn btn-success" @click="submitReview(item)">提交复核</button>
@@ -907,7 +919,7 @@
                   <p class="font-bold text-slate-900">{{ r.qid }}</p>
                   <span class="text-xs text-slate-500">评阅人: {{ r.grader === 'human' ? '人工评阅' : r.grader }}</span>
                   <span v-if="r.graded_at" class="text-xs text-slate-500">评阅时间: {{ formatGradedAt(r.graded_at) }}</span>
-                  <button type="button" class="btn btn-sm btn-secondary" @click="regradeQuestion(selectedStudent, r.qid)" :disabled="regradingQid === r.qid" title="使用 AI 重新评阅该题">
+                  <button type="button" class="btn btn-sm btn-secondary" @click="regradeQuestion(selectedStudent, r.qid)" :disabled="isBatchRegrading || regradingQid === r.qid" title="使用 AI 重新评阅该题">
                     {{ regradingQid === r.qid ? '评阅中…' : 'AI重新评阅' }}
                   </button>
                   <button type="button" class="btn btn-sm btn-secondary" @click="goToReviewFor(selectedStudent, r.qid)" title="跳转到人工复核页面">
@@ -1192,6 +1204,10 @@ createApp({
     const reviewTargetQid = ref('');
     const reviewTargetItem = ref(null);
     const regradingQid = ref('');
+    const isBatchRegrading = ref(false);
+    const batchRegradeTotal = ref(0);
+    const batchRegradeDone = ref(0);
+    const batchRegradeFailed = ref(0);
     const fromReviewStem = ref('');
     const fromReviewQid = ref('');
     const reviewAnswerImageBuster = ref(0);
@@ -1469,6 +1485,16 @@ createApp({
     const hasScoreData = computed(() => {
       return !!scoreField.value && scoreBarItems.value.length > 0;
     });
+    const batchRegradeProgressText = computed(() => {
+      if (!isBatchRegrading.value || batchRegradeTotal.value <= 0) return '';
+      const ok = Math.max(0, batchRegradeDone.value - batchRegradeFailed.value);
+      return `已完成 ${batchRegradeDone.value}/${batchRegradeTotal.value}，成功 ${ok}，失败 ${batchRegradeFailed.value}`;
+    });
+    const reviewBatchRegradeConcurrency = computed(() => {
+      const n = Number(configData.value?.assignment_grading?.num_workers);
+      if (!Number.isFinite(n) || n < 1) return 1;
+      return Math.floor(n);
+    });
 
     function setRosterSort(header) {
       if (!ROSTER_SORTABLE_HEADERS.includes(header)) return;
@@ -1489,30 +1515,84 @@ createApp({
       loadStudentResult();
     }
 
+    async function reloadAfterRegrade(stem, qid) {
+      await loadStudentResult(true);
+      await loadStudentList();
+      await loadRoster();
+      await loadSummary();
+      await loadReviewItems();
+      const currentStem = (reviewTargetStem.value || '').replace(/\.pdf$/i, '');
+      if (stem && qid && currentStem === stem && reviewTargetQid.value === qid) {
+        const data = await api(`/api/review/item/${encodeURIComponent(stem)}/${encodeURIComponent(qid)}`);
+        if (!data.error) reviewTargetItem.value = data;
+      }
+    }
+
+    async function callRegradeApi(stem, qid) {
+      return api(`/api/pipeline/regrade/${encodeURIComponent(stem)}/${encodeURIComponent(qid)}`, { method: 'POST' });
+    }
+
     async function regradeQuestion(filenameOrStem, qid) {
-      if (!filenameOrStem || !qid) return;
+      if (!filenameOrStem || !qid || isBatchRegrading.value) return;
       const stem = String(filenameOrStem).replace(/\.pdf$/i, '');
       regradingQid.value = qid;
       try {
-        const res = await api(`/api/pipeline/regrade/${encodeURIComponent(stem)}/${encodeURIComponent(qid)}`, { method: 'POST' });
+        const res = await callRegradeApi(stem, qid);
         if (res.error) { showToast(res.error || '重新评阅失败', 'error'); return; }
         const score = res.score ?? '-';
         const confidence = res.confidence ?? '-';
         showToast(`AI 重新评阅完成，得分 ${score}，置信度 ${confidence}`);
-        await loadStudentResult(true);
-        await loadStudentList();
-        await loadRoster();
-        await loadSummary();
-        await loadReviewItems();
-        const currentStem = (reviewTargetStem.value || '').replace(/\.pdf$/i, '');
-        if (currentStem === stem && reviewTargetQid.value === qid) {
-          const data = await api(`/api/review/item/${encodeURIComponent(stem)}/${encodeURIComponent(qid)}`);
-          if (!data.error) reviewTargetItem.value = data;
-        }
+        await reloadAfterRegrade(stem, qid);
       } catch (e) {
         showToast(e?.message || '重新评阅请求失败', 'error');
       } finally {
         regradingQid.value = '';
+      }
+    }
+
+    async function regradeAllPendingReviewItems() {
+      const pending = (reviewItems.value || []).map(item => ({
+        stem: String(item.filename || '').replace(/\.pdf$/i, ''),
+        qid: item.qid
+      })).filter(item => item.stem && item.qid);
+      if (!pending.length || isBatchRegrading.value) return;
+      const concurrency = Math.max(1, reviewBatchRegradeConcurrency.value || 1);
+      const ok = confirm(`将对 ${pending.length} 道待处理题目执行 AI 重评（并发 ${concurrency}），是否继续？`);
+      if (!ok) return;
+
+      isBatchRegrading.value = true;
+      batchRegradeTotal.value = pending.length;
+      batchRegradeDone.value = 0;
+      batchRegradeFailed.value = 0;
+      try {
+        let cursor = 0;
+        const worker = async () => {
+          while (true) {
+            const idx = cursor;
+            cursor += 1;
+            if (idx >= pending.length) return;
+            const item = pending[idx];
+            regradingQid.value = item.qid;
+            try {
+              const res = await callRegradeApi(item.stem, item.qid);
+              if (res?.error) batchRegradeFailed.value += 1;
+            } catch {
+              batchRegradeFailed.value += 1;
+            } finally {
+              batchRegradeDone.value += 1;
+            }
+          }
+        };
+        const workerCount = Math.min(concurrency, pending.length);
+        await Promise.all(Array.from({ length: workerCount }, () => worker()));
+        await reloadAfterRegrade('', '');
+        const successCount = Math.max(0, batchRegradeDone.value - batchRegradeFailed.value);
+        const failedCount = batchRegradeFailed.value;
+        if (!failedCount) showToast(`批量 AI 重评完成，共 ${successCount} 题`);
+        else showToast(`批量 AI 重评完成：成功 ${successCount}，失败 ${failedCount}`, 'error');
+      } finally {
+        regradingQid.value = '';
+        isBatchRegrading.value = false;
       }
     }
 
@@ -1736,6 +1816,23 @@ createApp({
       showToast('上传成功');
       await loadQuestions();
       event.target.value = '';
+    }
+
+    async function removeConfigImage(q, kind, idx) {
+      if (!q || !Number.isInteger(idx) || idx < 0) return;
+      const prop = kind === 'question' ? 'question_images' : 'example_answer_images';
+      const arr = q[prop];
+      if (!Array.isArray(arr) || idx >= arr.length) return;
+      const backup = arr.slice();
+      arr.splice(idx, 1);
+      const res = await persistQuestion(q, { silent: true });
+      if (res?.error) {
+        q[prop] = backup;
+        showToast(res.error || '删除失败', 'error');
+        return;
+      }
+      showToast('图片已删除');
+      await loadQuestions();
     }
 
     let pollTimer = null;
@@ -2579,6 +2676,11 @@ createApp({
       reviewTargetStem,
       reviewTargetQid,
       regradingQid,
+      isBatchRegrading,
+      batchRegradeTotal,
+      batchRegradeDone,
+      batchRegradeProgressText,
+      regradeAllPendingReviewItems,
       fromReviewStem,
       fromReviewQid,
       reviewAnswerImageBuster,
@@ -2620,6 +2722,7 @@ createApp({
       configAutoSaveBusy,
       deleteQuestion,
       uploadImage,
+      removeConfigImage,
       uploadImageBlob,
       runPipeline,
       cancelPipeline,

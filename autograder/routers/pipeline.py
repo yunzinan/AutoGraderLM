@@ -39,6 +39,26 @@ from autograder.routers.questions import load_all_questions
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
+_PAGE_FILE_RE = re.compile(r"^page_(\d+)\.png$", re.IGNORECASE)
+_ANSWER_FILE_RE = re.compile(r"^(?P<qid>.+)-(?P<idx>\d+)\.png$", re.IGNORECASE)
+
+
+def _page_file_sort_key(path: Path) -> tuple[int, str]:
+    """按 page_数字.png 的数字序号排序，避免 page_10 排到 page_2 前。"""
+    match = _PAGE_FILE_RE.match(path.name)
+    if match:
+        return (int(match.group(1)), path.name)
+    return (10**9, path.name)
+
+
+def _answer_file_sort_key(path: Path) -> tuple[str, int, str]:
+    """按 qid + 序号排序，避免 Q1-10.png 在 Q1-2.png 前。"""
+    match = _ANSWER_FILE_RE.match(path.name)
+    if match:
+        return (match.group("qid"), int(match.group("idx")), path.name)
+    return (path.stem, 10**9, path.name)
+
+
 def _reports_dir() -> Path:
     """报告目录：results/reports/，下含 Q1/report.md、Q1/reference.md 等"""
     return get_results_dir() / "reports"
@@ -64,7 +84,7 @@ def _build_answer_map_from_disk() -> dict[str, dict[str, list[str]]]:
             continue
         stem = stem_dir.name
         by_qid: dict[str, list[str]] = {}
-        for f in sorted(stem_dir.glob("*.png")):
+        for f in sorted(stem_dir.glob("*.png"), key=_answer_file_sort_key):
             if not f.is_file():
                 continue
             # 文件名格式 Q1-0.png, Q2-1.png -> qid 为 Q1, Q2
@@ -902,7 +922,7 @@ def _list_segment_assignments() -> list[dict]:
         llm_dir = sub / "_pages" / "for_llm"
         if not llm_dir.is_dir():
             continue
-        pages = sorted(llm_dir.glob("page_*.png"))
+        pages = sorted(llm_dir.glob("page_*.png"), key=_page_file_sort_key)
         if not pages:
             continue
         out.append({"stem": stem, "label": stem})
@@ -940,7 +960,7 @@ def segment_editor_get_assignment(stem: str) -> dict:
     base = get_answers_dir() / actual_stem / "_pages" / "for_llm"
     if not base.exists() or not base.is_dir():
         return {"error": "未找到该作业的 for_llm 页面"}
-    page_files = sorted(base.glob("page_*.png"))
+    page_files = sorted(base.glob("page_*.png"), key=_page_file_sort_key)
     pages = []
     dimensions = []
     for f in page_files:
