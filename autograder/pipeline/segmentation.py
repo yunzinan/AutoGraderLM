@@ -140,11 +140,95 @@ def _ink_bbox_in_region(
     ]
 
 
+def _detect_ink_bands(
+    page_img: Image.Image,
+    *,
+    threshold: int,
+    min_ink_per_row: int,
+    gap_tolerance: int,
+) -> list[tuple[int, int]]:
+    """Detect vertical ink bands as (y1, y2) ranges in page coordinates."""
+    gray = page_img.convert("L")
+    width, height = gray.size
+    mask = gray.point(lambda p: 255 if p < threshold else 0, "L")
+    mask_bytes = mask.tobytes()
+    bands: list[tuple[int, int]] = []
+    active_start: int | None = None
+    last_active_y: int | None = None
+
+    for y in range(height):
+        row_start = y * width
+        ink = mask_bytes[row_start:row_start + width].count(255)
+        if ink >= min_ink_per_row:
+            if active_start is None:
+                active_start = y
+            last_active_y = y
+            continue
+        if active_start is not None and last_active_y is not None and y - last_active_y > gap_tolerance:
+            bands.append((active_start, last_active_y + 1))
+            active_start = None
+            last_active_y = None
+
+    if active_start is not None and last_active_y is not None:
+        bands.append((active_start, last_active_y + 1))
+    return bands
+
+
+def _snap_bbox_to_ink_bands(
+    bbox: list[int],
+    ink_bands: list[tuple[int, int]],
+    width: int,
+    height: int,
+    pp_cfg: SegmentationPostprocessConfig,
+) -> list[int]:
+    """Expand bbox to nearby vertical ink bands that likely form one answer block."""
+    if not ink_bands:
+        return bbox
+
+    search_top = max(0, bbox[1] - pp_cfg.snap_padding)
+    search_bottom = min(height, bbox[3] + pp_cfg.snap_padding)
+    selected = [
+        idx for idx, (top, bottom) in enumerate(ink_bands)
+        if bottom >= search_top and top <= search_bottom
+    ]
+    if not selected:
+        return bbox
+
+    first = min(selected)
+    last = max(selected)
+    bridge_top = max(0, search_top - pp_cfg.band_bridge_gap)
+    bridge_bottom = min(height, search_bottom + pp_cfg.band_bridge_gap)
+
+    while first > 0:
+        prev_top, prev_bottom = ink_bands[first - 1]
+        cur_top, _cur_bottom = ink_bands[first]
+        if prev_bottom < bridge_top or cur_top - prev_bottom > pp_cfg.band_bridge_gap:
+            break
+        first -= 1
+
+    while last < len(ink_bands) - 1:
+        _cur_top, cur_bottom = ink_bands[last]
+        next_top, _next_bottom = ink_bands[last + 1]
+        if next_top > bridge_bottom or next_top - cur_bottom > pp_cfg.band_bridge_gap:
+            break
+        last += 1
+
+    band_top = max(0, ink_bands[first][0] - pp_cfg.band_padding)
+    band_bottom = min(height, ink_bands[last][1] + pp_cfg.band_padding)
+    snapped = _clamp_bbox(
+        [bbox[0], min(bbox[1], band_top), bbox[2], max(bbox[3], band_bottom)],
+        width,
+        height,
+    )
+    return snapped or bbox
+
+
 def _repair_region_bbox(
     bbox: list[int],
     page_img: Image.Image,
     page_dim: tuple[int, int],
     pp_cfg: SegmentationPostprocessConfig,
+    ink_bands: list[tuple[int, int]] | None = None,
 ) -> list[int] | None:
     """Make a coarse LLM bbox safer for answer cropping."""
     width, height = page_dim
@@ -176,6 +260,9 @@ def _repair_region_bbox(
                     max(fixed[2], ink[2]),
                     max(fixed[3], ink[3]),
                 ]
+
+    if pp_cfg.snap_to_ink_bands and ink_bands:
+        fixed = _snap_bbox_to_ink_bands(fixed, ink_bands, width, height, pp_cfg)
 
     if pp_cfg.full_width:
         fixed[0] = pp_cfg.horizontal_margin
@@ -216,6 +303,16 @@ def _postprocess_segmentation_result(
     page_images: list[Image.Image] = []
     try:
         page_images = [Image.open(path).convert("RGB") for path in page_image_paths]
+        page_ink_bands = [
+            _detect_ink_bands(
+                img,
+                threshold=pp_cfg.ink_threshold,
+                min_ink_per_row=pp_cfg.band_min_ink_per_row,
+                gap_tolerance=pp_cfg.band_gap_tolerance,
+            )
+            if pp_cfg.snap_to_ink_bands else []
+            for img in page_images
+        ]
         by_qid: dict[str, list[BBox]] = {qid: [] for qid in expected_qids}
         extras: dict[str, list[BBox]] = {}
 
@@ -230,6 +327,7 @@ def _postprocess_segmentation_result(
                     page_images[page_idx],
                     page_dims[page_idx],
                     pp_cfg,
+                    page_ink_bands[page_idx],
                 )
                 if repaired is None:
                     continue

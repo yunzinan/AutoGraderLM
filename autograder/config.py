@@ -46,8 +46,13 @@ class SegmentationPostprocessConfig(BaseModel):
     vertical_margin: int = Field(default=28, ge=0, le=512)
     snap_to_content: bool = True
     snap_padding: int = Field(default=72, ge=0, le=512)
+    snap_to_ink_bands: bool = True
     ink_threshold: int = Field(default=245, ge=0, le=255)
     min_ink_pixels: int = Field(default=32, ge=0, le=100000)
+    band_min_ink_per_row: int = Field(default=8, ge=0, le=10000)
+    band_gap_tolerance: int = Field(default=6, ge=0, le=256)
+    band_bridge_gap: int = Field(default=80, ge=0, le=1024)
+    band_padding: int = Field(default=18, ge=0, le=512)
     min_box_height: int = Field(default=48, ge=1, le=1024)
 
 
