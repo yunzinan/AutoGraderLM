@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from autograder.config import get_config, get_answers_dir, get_results_dir
 from autograder.models import StudentResult, _now_iso
 from autograder.path_utils import is_safe_path_segment, require_safe_path_segment
-from autograder.pipeline.grading import load_all_results, load_student_result
+from autograder.pipeline.grading import load_all_results, load_student_result, question_sort_key
 from autograder.routers.questions import load_all_questions
 
 router = APIRouter(prefix="/api/review", tags=["review"])
@@ -157,11 +157,26 @@ class ReviewUpdate(BaseModel):
     comments: str = ""
 
 
+def _validate_review_update(qid: str, body: ReviewUpdate) -> str | None:
+    if body.confidence < 0 or body.confidence > 4:
+        return "confidence 必须在 0 到 4 之间"
+    questions = load_all_questions()
+    q = next((x for x in questions if x.qid == qid), None)
+    if q is not None and body.score > q.score:
+        return f"分数不能超过 {qid} 满分 {q.score}"
+    if body.score < 0:
+        return "分数不能小于 0"
+    return None
+
+
 @router.put("/{filename_stem}/{qid}")
 def update_review(filename_stem: str, qid: str, body: ReviewUpdate) -> dict:
     """Teacher manually updates a grading record."""
     filename_stem = _safe_segment(_normalize_stem(filename_stem), "filename_stem")
     qid = _safe_segment(qid, "qid")
+    validation_error = _validate_review_update(qid, body)
+    if validation_error:
+        return {"error": validation_error}
     path = get_results_dir() / f"{filename_stem}.json"
     if not path.exists():
         return {"error": "结果文件不存在"}
@@ -183,5 +198,7 @@ def update_review(filename_stem: str, qid: str, body: ReviewUpdate) -> dict:
         return {"error": f"未找到 {qid} 的记录"}
 
     sr.total_score = sum(r.score for r in sr.records)
+    question_order = {q.qid: idx for idx, q in enumerate(load_all_questions())}
+    sr.records.sort(key=lambda r: question_sort_key(r.qid, question_order))
     path.write_text(sr.model_dump_json(indent=2), encoding="utf-8")
     return {"ok": True}

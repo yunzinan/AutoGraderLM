@@ -21,6 +21,17 @@ from autograder.pdf_utils import parse_student_info, student_canonical_stem
 logger = logging.getLogger(__name__)
 
 
+def question_sort_key(qid: str, question_order: dict[str, int] | None = None) -> tuple[int, int, str]:
+    """Sort qids by configured question order, then by natural Q-number order."""
+    if question_order and qid in question_order:
+        return (0, question_order[qid], qid)
+    prefix = qid.rstrip("0123456789")
+    suffix = qid[len(prefix):]
+    if suffix.isdigit():
+        return (1, int(suffix), qid)
+    return (2, 0, qid)
+
+
 class GradeState(TypedDict, total=False):
     qid: str
     max_score: int
@@ -214,6 +225,7 @@ async def run_grading(
     num_workers = grading_cfg.num_workers
 
     q_map = {q.qid: q for q in questions}
+    question_order = {q.qid: idx for idx, q in enumerate(questions)}
     all_students = sorted(answer_map.keys())
     total = sum(len(qids) for qids in answer_map.values())
     sem = asyncio.Semaphore(num_workers)
@@ -223,7 +235,7 @@ async def run_grading(
     tasks_args: list[tuple[str, str, QuestionConfig, list[str]]] = []
     for stem in all_students:
         qid_images = answer_map[stem]
-        for qid in sorted(qid_images.keys()):
+        for qid in sorted(qid_images.keys(), key=lambda x: question_sort_key(x, question_order)):
             q = q_map.get(qid)
             if q is None:
                 logger.warning("Question config not found for %s", qid)
@@ -261,7 +273,7 @@ async def run_grading(
     results: list[StudentResult] = []
     for stem in all_students:
         records = by_stem.get(stem, [])
-        records.sort(key=lambda r: r.qid)
+        records.sort(key=lambda r: question_sort_key(r.qid, question_order))
         student_id, student_name = parse_student_info(stem + ".pdf")
         student_result = StudentResult(
             filename=stem + ".pdf",

@@ -60,6 +60,14 @@ HEADER_COMMENT = "评语（录入项）"
 HEADER_STUDENT_ID = "学号"
 
 
+def _ensure_output_headers(headers: list[str]) -> list[str]:
+    out = list(headers)
+    for h in (HEADER_SCORE, HEADER_COMMENT):
+        if h not in out:
+            out.append(h)
+    return out
+
+
 def export_graded_xlsx(
     roster_path: str | Path,
     results: dict[str, tuple[int, str]],
@@ -90,7 +98,7 @@ def _export_from_xls(src: Path, results: dict, dst: Path) -> None:
             openpyxl.Workbook().save(str(dst))
         return
 
-    headers = list(rows[0].keys())
+    headers = _ensure_output_headers(list(rows[0].keys()))
     for row in rows:
         sid = str(row.get(HEADER_STUDENT_ID, ""))
         if sid in results:
@@ -124,8 +132,14 @@ def _export_from_xlsx(src: Path, results: dict, dst: Path) -> None:
     headers = [str(c.value).strip() for c in ws[1]]
 
     sid_col = headers.index(HEADER_STUDENT_ID) + 1 if HEADER_STUDENT_ID in headers else None
-    score_col = headers.index(HEADER_SCORE) + 1 if HEADER_SCORE in headers else None
-    comment_col = headers.index(HEADER_COMMENT) + 1 if HEADER_COMMENT in headers else None
+    if HEADER_SCORE not in headers:
+        headers.append(HEADER_SCORE)
+        ws.cell(1, len(headers), HEADER_SCORE)
+    if HEADER_COMMENT not in headers:
+        headers.append(HEADER_COMMENT)
+        ws.cell(1, len(headers), HEADER_COMMENT)
+    score_col = headers.index(HEADER_SCORE) + 1
+    comment_col = headers.index(HEADER_COMMENT) + 1
 
     if sid_col is None:
         wb.save(str(dst))
@@ -160,6 +174,7 @@ def write_roster_to_xls(
 ) -> None:
     """将「评分统计」表格按 in.xls 的列顺序写入 .xls，供下载使用。"""
     out_path = Path(out_path)
+    headers = _ensure_output_headers(headers)
     wb = xlwt.Workbook()
     ws = wb.add_sheet("Sheet1")
     for c, h in enumerate(headers):

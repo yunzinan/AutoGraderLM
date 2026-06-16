@@ -27,6 +27,7 @@ from autograder.pipeline.grading import (
     build_grading_graph,
     load_all_results,
     load_student_result,
+    question_sort_key,
     run_grading,
 )
 from autograder.pipeline.report import generate_all_reports, generate_question_report_sync, run_report_sync
@@ -1145,7 +1146,8 @@ async def regrade_single(stem: str, qid: str) -> dict:
             break
     if not updated:
         sr.records.append(record)
-        sr.records.sort(key=lambda x: x.qid)
+    question_order = {qq.qid: idx for idx, qq in enumerate(questions)}
+    sr.records.sort(key=lambda x: question_sort_key(x.qid, question_order))
 
     sr.total_score = sum(r.score for r in sr.records)
     _save_student_result(sr)
