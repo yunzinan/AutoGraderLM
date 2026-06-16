@@ -34,6 +34,7 @@ assignment_segmentation:
     model: "your-vision-model"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/segmentation.jinja"
+    timeout_seconds: 180
 
 assignment_grading:
   num_workers: 5
@@ -42,6 +43,7 @@ assignment_grading:
     model: "your-vision-model"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/grading.jinja"
+    timeout_seconds: 180
 
 assignment_regrade:
   add_to_regrade_when_below: 0.20
@@ -54,6 +56,7 @@ assignment_report:
     model: "your-vision-model"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/report.jinja"
+    timeout_seconds: 180
   excel_out_path: "out.xls"
 
 llm_log:

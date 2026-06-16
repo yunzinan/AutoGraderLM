@@ -26,6 +26,7 @@ class LLMConfig(BaseModel):
     prompt_template: str = ""
     base_url: str = ""
     api_key: str = ""
+    timeout_seconds: float = Field(default=180.0, ge=5.0, le=1800.0)
 
 
 class WebServerConfig(BaseModel):

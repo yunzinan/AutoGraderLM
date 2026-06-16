@@ -88,13 +88,16 @@ class _OpenAICompatAsyncHTTPTransport(httpx.AsyncHTTPTransport):
 
 def build_llm(cfg: LLMConfig) -> ChatOpenAI:
     api_base = (cfg.base_url or "").strip() or "https://api.openai.com/v1"
+    timeout = httpx.Timeout(cfg.timeout_seconds, connect=min(30.0, cfg.timeout_seconds))
     http_client = DefaultHttpxClient(
         base_url=api_base,
         transport=_OpenAICompatHTTPTransport(),
+        timeout=timeout,
     )
     http_async_client = DefaultAsyncHttpxClient(
         base_url=api_base,
         transport=_OpenAICompatAsyncHTTPTransport(),
+        timeout=timeout,
     )
     return ChatOpenAI(
         model=cfg.model,
@@ -102,6 +105,7 @@ def build_llm(cfg: LLMConfig) -> ChatOpenAI:
         api_key=cfg.api_key or "EMPTY",
         temperature=0.1,
         max_retries=2,
+        timeout=cfg.timeout_seconds,
         http_client=http_client,
         http_async_client=http_async_client,
     )
