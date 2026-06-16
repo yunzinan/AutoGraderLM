@@ -4,21 +4,41 @@
   <img src="static/badge.png" alt="AutoGraderLM" width="33%" />
 </div>
 
-**Automatic LLM-based Grader for Homework Grading** — A web application that uses vision-capable LLMs to segment, grade, and analyze student PDF submissions with a graphical interface.
+**AutoGraderLM** is a local web application for LLM-assisted homework grading. It uses vision-capable OpenAI-compatible models to segment student PDF submissions, grade per-question answers, support manual review, export scores, and generate per-question analysis reports.
+
+[中文 README](README.zh-CN.md) | [Detailed Chinese usage guide](use-guide.md)
 
 ---
 
-## Overview
+## What It Does
 
-AutoGraderLM automates the homework grading workflow:
+AutoGraderLM is designed for a repeated homework grading workflow:
 
-1. **Configure** questions (stem, rubric, reference answers)
-2. **Segment** PDFs into per-question images via LLM(also supports manual segmentation)
-3. **Grade** each answer with scores, confidence, and comments
-4. **Review** low-confidence items manually
-5. **Export** scores and generate per-question analysis reports
+1. Configure questions, rubrics, scores, and reference answers.
+2. Load student PDF submissions from an assignment folder.
+3. Segment each PDF into per-question answer images with a vision LLM.
+4. Manually adjust segmentation boxes when needed.
+5. Grade each question with score, confidence, summary, and comments.
+6. Review low-confidence or low-score items manually.
+7. Browse per-student results and rerun single-question grading.
+8. Export roster-compatible score sheets and generate per-question reports.
 
-See [use-guide.md](use-guide.md) for detailed usage (in Chinese).
+The app runs locally by default at `127.0.0.1:8081` and stores assignment data under a local `assignment_path`.
+
+---
+
+## Main UI Modules
+
+| Module | Purpose |
+|--------|---------|
+| Overview | Shows expected/submitted/segmented/graded counts and per-submission status. |
+| Question Config | Edits question text, score, rubric, reference answer, and images. |
+| Segmentation | Runs PDF segmentation and provides a manual bounding-box editor. |
+| Grading | Runs full or incremental LLM grading over segmented answers. |
+| Manual Review | Fixes low-confidence or low-score grading records. |
+| Results | Browses each student result and supports single-question regrading. |
+| Statistics | Shows roster scores, distributions, Excel export, and report generation. |
+| Reports | Displays per-question analysis reports and exports report PDF. |
 
 ---
 
@@ -32,38 +52,76 @@ conda activate autograder
 # Install dependencies
 pip install -r requirements.txt
 
-# Create .env with your LLM API credentials
+# Configure LLM credentials
 echo "OPENAI_API_KEY=your-api-key" > .env
 echo "OPENAI_BASE_URL=https://api.openai.com/v1" >> .env
 
-# Copy and edit the example assignment config, then run
+# Copy and edit the example assignment config
 cp config.example.yaml config.yaml
+
+# Start the app
 python main.py -c config.yaml
 ```
 
-Open **http://localhost:8081** in your browser.
+Open <http://localhost:8081>.
+
+The example config uses:
+
+```yaml
+assignment_path: ./assignment_example/
+web_server:
+  host: "127.0.0.1"
+  port: 8081
+```
+
+Use `0.0.0.0` only when intentionally exposing the app on a trusted LAN. The app has no built-in authentication.
 
 ---
 
-## Deployment
+## Assignment Folder Layout
 
-### Requirements
+Each config points to one assignment folder via `assignment_path`.
 
-- Python 3.12+
-- OpenAI-compatible API (vision model support)
+```text
+assignment_example/
+├── res/           # Student PDFs: {student_id}_{name}.pdf or {student_id}_{name}_*.pdf
+├── in.xls         # Optional roster spreadsheet
+├── questions/     # Created by the app
+├── answers/       # Created by segmentation
+└── results/       # Created by grading/report generation
+```
 
-### Steps
+Recommended PDF naming:
 
-1. Clone the repo and `cd` into it
-2. Create a virtual environment (conda or venv)
-3. `pip install -r requirements.txt`
-4. Add `.env` with `OPENAI_API_KEY` and optionally `OPENAI_BASE_URL`
-5. Prepare assignment directory (see [use-guide.md](use-guide.md))
-6. Run: `python main.py -c <config.yaml>`
+```text
+2023000001_ZhangSan.pdf
+2023000002_LiSi_1234.pdf
+```
 
-### Switching Assignments
+Only the first two underscore-separated parts are used as the canonical student key: `student_id_name`. This lets a newer PDF for the same student overwrite previous segmentation/results cleanly.
 
-Use different config files per assignment:
+Generated assignment data and local configs are ignored by Git.
+
+---
+
+## Configuration
+
+Start from [config.example.yaml](config.example.yaml). Important fields:
+
+| Field | Meaning |
+|-------|---------|
+| `assignment_name` | Display name in the UI. |
+| `assignment_path` | Local folder containing one assignment. |
+| `web_server.host` / `port` | Local bind address and port. |
+| `assignment_configuration.pdf_folder_path` | PDF folder relative to `assignment_path`. |
+| `assignment_configuration.excel_in_path` | Roster file path relative to `assignment_path`. |
+| `assignment_segmentation` | Segmentation model, prompt template, concurrency, retries. |
+| `assignment_grading` | Grading model, prompt template, concurrency, retries. |
+| `assignment_regrade.add_to_regrade_when_below` | Low-score threshold for manual review queue. |
+| `assignment_report` | Report model, export path, concurrency, vision limits. |
+| `llm_log` | Optional LLM request/response logging for debugging. |
+
+For multiple assignments, keep separate local config files:
 
 ```bash
 python main.py -c config.assignment1.yaml
@@ -72,102 +130,64 @@ python main.py -c config.assignment2.yaml
 
 ---
 
+## Data Flow
+
+```text
+Question config
+  -> questions/{Qid}/config.json
+
+Segmentation
+  -> answers/{student_id_name}/{Qid}-{idx}.png
+  -> answers/{student_id_name}/_pages/segments.json
+
+Grading and review
+  -> results/{student_id_name}.json
+
+Reports and export
+  -> results/reports/
+  -> configured Excel output path
+```
+
+The current public tree does not track assignment-specific `config_hw*.yaml`, `hw*/`, `.env`, logs, results, or generated answer files.
+
+---
+
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           AutoGraderLM                                   │
-├─────────────────────────────────────────────────────────────────────────┤
-│  Frontend (Vue 3 + Tailwind)  │  Backend (FastAPI)                       │
-│  static/index.html            │  autograder/                             │
-│  - Question config            │  - app.py (routers, static mounts)       │
-│  - Segmentation editor        │  - routers/: questions, pipeline,        │
-│  - Review UI                  │    review, results, stats                │
-│  - Results & stats            │  - pipeline/: segmentation, grading,     │
-│  - Reports                    │    report                                │
-└─────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│  LangGraph pipelines  │  LangChain (OpenAI-compatible)  │  PyMuPDF      │
-│  - Segmentation       │  - Vision messages              │  - PDF split  │
-│  - Grading (retry)    │  - JSON extraction              │  - Page crop │
-│  - Report generation  │  - invoke_with_log                │               │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Key Components
-
-| Component | Role |
-|-----------|------|
-| `main.py` | Entry point; loads config via `-c`, runs uvicorn |
-| `autograder/config.py` | YAML config + env vars; resolves paths under `assignment_path` |
-| `autograder/llm.py` | LangChain ChatOpenAI wrapper; vision messages; JSON extraction |
-| `autograder/pipeline/` | LangGraph workflows: segmentation, grading, report |
-| `autograder/routers/` | REST API for questions, pipeline, review, results, stats |
-| `prompts/*.jinja` | Jinja2 templates for LLM prompts |
-
----
-
-## Dependencies
-
-| Package | Purpose |
-|---------|---------|
-| FastAPI, uvicorn | Web server |
-| LangChain, LangGraph | LLM orchestration, pipeline graphs |
-| PyMuPDF, Pillow | PDF rendering, image handling |
-| Jinja2 | Prompt templates |
-| openpyxl, xlrd, xlwt | Excel read/write (.xls, .xlsx) |
-| PyYAML, python-dotenv | Config and env |
-
-See [requirements.txt](requirements.txt) for versions.
-
----
-
-## Project Structure
-
-```
+```text
 AutoGraderLM/
-├── main.py                 # Entry point
+├── main.py                 # CLI entrypoint, loads -c/--config
 ├── config.example.yaml     # Generic config template
-├── .env                    # OPENAI_API_KEY, OPENAI_BASE_URL (gitignored)
 ├── autograder/
-│   ├── app.py              # FastAPI app factory
-│   ├── config.py           # Config loading, path resolution
-│   ├── llm.py              # LLM client, vision messages
+│   ├── app.py              # FastAPI app factory and static mounts
+│   ├── config.py           # YAML/env config loading and path resolution
+│   ├── llm.py              # OpenAI-compatible multimodal LLM wrapper
 │   ├── models.py           # Pydantic models
-│   ├── pdf_utils.py        # PDF parsing, student info
-│   ├── excel_utils.py      # Roster read/write
+│   ├── pdf_utils.py        # PDF rendering and cropping
+│   ├── excel_utils.py      # Roster reading/export
 │   ├── pipeline/
-│   │   ├── segmentation.py # PDF → per-question images
-│   │   ├── grading.py       # LLM grading with retry
-│   │   └── report.py       # Per-question reports
-│   └── routers/
-│       ├── questions.py    # Question CRUD
-│       ├── pipeline.py     # Segment, grade, report, segment editor
-│       ├── review.py       # Manual review
-│       ├── results.py      # Per-student results
-│       └── stats.py        # Roster, export, summary
-├── prompts/
-│   ├── segmentation*.jinja # Segmentation prompts
-│   ├── grading*.jinja      # Grading prompts
-│   └── report.jinja        # Report prompt
-├── static/
-│   └── index.html          # SPA (Vue 3)
-├── use-guide.md            # Usage guide (Chinese)
+│   │   ├── segmentation.py # PDF -> answer image segmentation
+│   │   ├── grading.py      # LLM grading graph
+│   │   └── report.py       # Report generation
+│   └── routers/            # REST API routers
+├── prompts/                # Jinja2 prompt templates
+├── static/index.html       # Vue 3 single-page app
+├── use-guide.md            # Detailed Chinese guide
 └── requirements.txt
 ```
 
-Per-assignment data (under `assignment_path`, e.g. `assignment_example/`):
+Backend: FastAPI, LangGraph, LangChain OpenAI, PyMuPDF, Pillow, Jinja2.  
+Frontend: Vue 3 + Tailwind from CDN in `static/index.html`.
 
-```
-assignment_example/
-├── res/           # Student PDFs ({学号}_{姓名}.pdf or {学号}_{姓名}_*.pdf; 学号_姓名 used as key)
-├── in.xls         # Student roster (学号, 姓名, 成绩, 评语)
-├── questions/     # Question configs (Q1, Q2, ...)
-├── answers/       # Segmented images per student (dirs named 学号_姓名; overwrite on re-run)
-└── results/      # Grading JSON per student (学号_姓名.json; overwrite on re-run)
-```
+---
+
+## Notes For Public Use
+
+- Use an OpenAI-compatible endpoint with vision support.
+- The frontend loads Vue/Tailwind/Marked/KaTeX from public CDNs, so internet access is needed for the UI unless those assets are vendored.
+- Keep `.env` local; `/api/config` does not return API keys.
+- Raw `results/` files are not statically exposed by the app.
+- The default server host is `127.0.0.1`. Treat `0.0.0.0` as a trusted-network setting.
 
 ---
 
