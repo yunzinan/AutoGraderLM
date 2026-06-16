@@ -533,8 +533,28 @@
                 @change="loadSegmentEditorAssignment"
               >
                 <option value="">-- 请选择 --</option>
-                <option v-for="a in filteredSegmentEditorAssignments" :key="a.stem" :value="a.stem">{{ maskSensitive(a.label) }}</option>
+                <option v-for="a in filteredSegmentEditorAssignments" :key="a.stem" :value="a.stem">{{ maskSensitive(a.label) }}{{ segmentAssignmentOptionSuffix(a) }}</option>
               </select>
+            </div>
+            <div
+              v-if="activeSegmentDiagnostics"
+              class="mt-3 flex flex-wrap items-center gap-2 text-xs"
+            >
+              <span :class="segmentDiagnosticsBadgeClass(activeSegmentDiagnostics)">
+                {{ activeSegmentDiagnostics.label || '无诊断' }}
+              </span>
+              <span v-if="activeSegmentStrategy" class="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600">
+                {{ activeSegmentStrategy }}
+              </span>
+              <span v-if="activeSegmentCoverageText" class="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600">
+                覆盖 {{ activeSegmentCoverageText }}
+              </span>
+              <span v-if="activeSegmentDiagnostics.fallback_used" class="rounded-full border border-sky-200 bg-sky-50 px-2 py-1 text-sky-700">
+                fallback
+              </span>
+              <span v-if="activeSegmentMissingText" class="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-amber-700">
+                缺少 {{ activeSegmentMissingText }}
+              </span>
             </div>
             <div v-if="segmentEditorLoadError" class="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{{ segmentEditorLoadError }}</div>
             <div v-if="segmentEditorData && segmentEditorData.error" class="mt-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{{ segmentEditorData.error }}</div>
@@ -546,7 +566,18 @@
                 :key="pageIdx"
                 class="segment-page-wrap inline-block relative"
               >
-                <div class="text-sm font-medium text-slate-600 mb-1">第 {{ pageIdx + 1 }} 页</div>
+                <div class="mb-1 flex items-center gap-2 text-sm font-medium text-slate-600">
+                  <span>第 {{ pageIdx + 1 }} 页</span>
+                  <button
+                    v-if="pg.candidate_url"
+                    type="button"
+                    class="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-xs text-slate-600 hover:border-brand-300 hover:text-brand-700"
+                    @click="openImageFullscreen(pg.candidate_url)"
+                    title="打开候选带标注图"
+                  >
+                    候选带
+                  </button>
+                </div>
                 <div
                   class="relative inline-block max-w-full segment-page-canvas group/seg"
                   :data-page-idx="pageIdx"
@@ -1321,6 +1352,43 @@ createApp({
       const list = segmentEditorAssignments.value || [];
       if (!q) return list;
       return list.filter(a => matchStemLabel(a, q));
+    });
+    const segmentEditorSelectedAssignment = computed(() => {
+      const stem = segmentEditorSelected.value;
+      if (!stem) return null;
+      return (segmentEditorAssignments.value || []).find(a => a.stem === stem) || null;
+    });
+    function segmentCoverageText(summary) {
+      if (!summary || typeof summary.coverage !== 'number') return '';
+      return Math.round(summary.coverage * 100) + '%';
+    }
+    function segmentAssignmentOptionSuffix(item) {
+      const summary = item && item.diagnostics_summary;
+      if (!summary || !summary.label) return '';
+      const coverage = segmentCoverageText(summary);
+      return ' · ' + summary.label + (coverage ? ' ' + coverage : '');
+    }
+    function segmentDiagnosticsBadgeClass(summary) {
+      const base = 'rounded-full border px-2 py-1 font-medium';
+      const status = summary && summary.status;
+      if (status === 'needs_review') return base + ' border-amber-200 bg-amber-50 text-amber-700';
+      if (status === 'fallback') return base + ' border-sky-200 bg-sky-50 text-sky-700';
+      if (status === 'manual') return base + ' border-violet-200 bg-violet-50 text-violet-700';
+      if (status === 'ok') return base + ' border-emerald-200 bg-emerald-50 text-emerald-700';
+      return base + ' border-slate-200 bg-slate-50 text-slate-600';
+    }
+    const activeSegmentDiagnostics = computed(() => {
+      const loadedSummary = segmentEditorData.value && segmentEditorData.value.diagnostics_summary;
+      return loadedSummary || (segmentEditorSelectedAssignment.value && segmentEditorSelectedAssignment.value.diagnostics_summary) || null;
+    });
+    const activeSegmentStrategy = computed(() => {
+      const loadedStrategy = segmentEditorData.value && segmentEditorData.value.strategy;
+      return loadedStrategy || (segmentEditorSelectedAssignment.value && segmentEditorSelectedAssignment.value.strategy) || '';
+    });
+    const activeSegmentCoverageText = computed(() => segmentCoverageText(activeSegmentDiagnostics.value));
+    const activeSegmentMissingText = computed(() => {
+      const missing = activeSegmentDiagnostics.value && activeSegmentDiagnostics.value.missing_qids;
+      return Array.isArray(missing) && missing.length ? missing.join(', ') : '';
     });
     const filteredStudentList = computed(() => {
       const q = (resultStudentFilter.value || '').trim();
@@ -2769,6 +2837,13 @@ createApp({
       maxDistCount,
       segmentEditorAssignments,
       segmentEditorSelected,
+      segmentEditorSelectedAssignment,
+      activeSegmentDiagnostics,
+      activeSegmentStrategy,
+      activeSegmentCoverageText,
+      activeSegmentMissingText,
+      segmentAssignmentOptionSuffix,
+      segmentDiagnosticsBadgeClass,
       segmentEditorCurrentIndex,
       segmentEditorHasPrev,
       segmentEditorHasNext,

@@ -916,6 +916,7 @@ def _list_segment_assignments() -> list[dict]:
     answers_dir = get_answers_dir()
     if not answers_dir.exists():
         return []
+    expected_qids = [q.qid for q in load_all_questions()]
     out = []
     for sub in sorted(answers_dir.iterdir()):
         if not sub.is_dir():
@@ -927,8 +928,97 @@ def _list_segment_assignments() -> list[dict]:
         pages = sorted(llm_dir.glob("page_*.png"), key=_page_file_sort_key)
         if not pages:
             continue
-        out.append({"stem": stem, "label": stem})
+        loaded = load_segments_for_stem(stem)
+        out.append({
+            "stem": stem,
+            "label": stem,
+            "strategy": loaded.get("strategy", "") if isinstance(loaded, dict) else "",
+            "diagnostics_summary": _segment_diagnostics_summary(loaded, expected_qids),
+        })
+    priority = {"needs_review": 0, "fallback": 1, "unknown": 2, "ok": 3, "manual": 4}
+    out.sort(key=lambda item: (
+        priority.get((item.get("diagnostics_summary") or {}).get("status"), 5),
+        item.get("stem", ""),
+    ))
     return out
+
+
+def _segment_diagnostics_summary(loaded: dict | None, expected_qids: list[str]) -> dict:
+    if not isinstance(loaded, dict):
+        return {
+            "status": "unknown",
+            "label": "无诊断",
+            "missing_qids": [],
+            "coverage": None,
+            "fallback_used": False,
+        }
+
+    raw_questions = loaded.get("questions") or loaded.get("question") or []
+    questions = raw_questions if isinstance(raw_questions, list) else []
+    by_qid = {
+        str(q.get("qid", "")): q.get("regions") or []
+        for q in questions
+        if isinstance(q, dict)
+    }
+    computed_missing = [qid for qid in expected_qids if not by_qid.get(qid)]
+    computed_nonempty = len(expected_qids) - len(computed_missing)
+    computed_coverage = (computed_nonempty / len(expected_qids)) if expected_qids else None
+
+    diagnostics = loaded.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        final_diag = diagnostics.get("after_postprocess") or diagnostics.get("before_postprocess") or {}
+        if isinstance(final_diag, dict):
+            missing = final_diag.get("missing_qids")
+            missing_qids = missing if isinstance(missing, list) else computed_missing
+            coverage = final_diag.get("assigned_ratio")
+            if not isinstance(coverage, (int, float)):
+                coverage = computed_coverage
+        else:
+            missing_qids = computed_missing
+            coverage = computed_coverage
+        if diagnostics.get("manual_override"):
+            status, label = ("needs_review", "需检查") if missing_qids else ("manual", "人工")
+            return {
+                "status": status,
+                "label": label,
+                "missing_qids": missing_qids,
+                "coverage": coverage,
+                "fallback_used": False,
+                "manual_override": True,
+            }
+        fallback_used = bool(diagnostics.get("fallback_used"))
+        fallback_attempted = bool(diagnostics.get("fallback_attempted"))
+        if missing_qids:
+            status, label = "needs_review", "需检查"
+        elif fallback_used:
+            status, label = "fallback", "已回退"
+        elif fallback_attempted:
+            status, label = "ok", "已验证"
+        else:
+            status, label = "ok", "通过"
+        return {
+            "status": status,
+            "label": label,
+            "missing_qids": missing_qids,
+            "coverage": coverage,
+            "fallback_used": fallback_used,
+            "fallback_attempted": fallback_attempted,
+            "fallback_mode": diagnostics.get("fallback_mode", ""),
+        }
+
+    if loaded.get("strategy") == "manual":
+        status, label = ("needs_review", "需检查") if computed_missing else ("manual", "人工")
+    elif computed_missing:
+        status, label = "needs_review", "需检查"
+    else:
+        status, label = "unknown", "无诊断"
+    return {
+        "status": status,
+        "label": label,
+        "missing_qids": computed_missing,
+        "coverage": computed_coverage,
+        "fallback_used": False,
+    }
 
 
 @router.get("/segment-editor/assignments")
@@ -967,7 +1057,8 @@ def segment_editor_get_assignment(stem: str) -> dict:
     page_files = sorted(base.glob("page_*.png"), key=_page_file_sort_key)
     pages = []
     dimensions = []
-    for f in page_files:
+    candidate_dir = get_answers_dir() / actual_stem / "_pages" / "candidates"
+    for idx, f in enumerate(page_files, start=1):
         try:
             img = Image.open(str(f))
             w, h = img.size
@@ -977,10 +1068,18 @@ def segment_editor_get_assignment(stem: str) -> dict:
         dimensions.append([w, h])
         # 前端通过 /files/answers/{stem}/_pages/for_llm/page_N.png 访问（用实际目录名）
         rel = f"/files/answers/{actual_stem}/_pages/for_llm/{f.name}"
-        pages.append({"url": rel, "width": w, "height": h, "name": f.name})
+        page_info = {"url": rel, "width": w, "height": h, "name": f.name}
+        candidate_path = candidate_dir / f"page_{idx}_candidates.png"
+        if candidate_path.exists():
+            page_info["candidate_url"] = f"/files/answers/{actual_stem}/_pages/candidates/{candidate_path.name}"
+        pages.append(page_info)
     loaded = load_segments_for_stem(actual_stem)
     questions = []
+    strategy = ""
+    diagnostics = {}
     if loaded:
+        strategy = loaded.get("strategy", "") if isinstance(loaded, dict) else ""
+        diagnostics = loaded.get("diagnostics") if isinstance(loaded.get("diagnostics"), dict) else {}
         raw = loaded.get("questions") or loaded.get("question")
         if isinstance(raw, list):
             questions = raw
@@ -993,6 +1092,9 @@ def segment_editor_get_assignment(stem: str) -> dict:
         "dimensions": dimensions,
         "questions": questions,
         "qids": qids,
+        "strategy": strategy,
+        "diagnostics": diagnostics,
+        "diagnostics_summary": _segment_diagnostics_summary(loaded, qids),
     }
 
 

@@ -1173,6 +1173,8 @@ def save_segments_for_stem(stem: str, dimensions: list[list[int]], questions: li
     cache_dir.mkdir(parents=True, exist_ok=True)
     segments_data = {
         "dimensions": dimensions,
+        "strategy": "manual",
+        "diagnostics": {"manual_override": True},
         "questions": [
             {"qid": q["qid"], "regions": [{"page": r["page"], "bbox": r["bbox"]} for r in q.get("regions", [])]}
             for q in questions
