@@ -20,6 +20,8 @@ assignment_segmentation:
   strategy: "band_assign"
   num_workers: 5
   max_retry: 3
+  band_assign_fill_missing_with_page_by_page: true
+  band_assign_min_assigned_ratio: 0.65
   postprocess:
     enabled: true
     full_width: true

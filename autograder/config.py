@@ -62,6 +62,8 @@ class SegmentationConfig(BaseModel):
     strategy: Literal["global", "page_by_page", "band_assign"] = "global"
     num_workers: int = 5
     max_retry: int = 3
+    band_assign_fill_missing_with_page_by_page: bool = True
+    band_assign_min_assigned_ratio: float = Field(default=0.65, ge=0.0, le=1.0)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     postprocess: SegmentationPostprocessConfig = Field(default_factory=SegmentationPostprocessConfig)
 

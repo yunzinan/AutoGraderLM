@@ -617,6 +617,62 @@ def _merge_segmentation_results(
     return SegmentationResult(questions=out)
 
 
+def _qid_regions_map(seg_result: SegmentationResult) -> dict[str, list[BBox]]:
+    by_qid: dict[str, list[BBox]] = {}
+    for qr in seg_result.questions:
+        by_qid.setdefault(qr.qid, []).extend(qr.regions)
+    return by_qid
+
+
+def _segmentation_diagnostics(
+    seg_result: SegmentationResult,
+    expected_qids: list[str],
+) -> dict[str, Any]:
+    by_qid = _qid_regions_map(seg_result)
+    missing_qids = [qid for qid in expected_qids if not by_qid.get(qid)]
+    nonempty_qids = [qid for qid in expected_qids if by_qid.get(qid)]
+    total_regions = sum(len(by_qid.get(qid, [])) for qid in expected_qids)
+    assigned_ratio = len(nonempty_qids) / len(expected_qids) if expected_qids else 1.0
+    return {
+        "expected_qids": len(expected_qids),
+        "nonempty_qids": len(nonempty_qids),
+        "missing_qids": missing_qids,
+        "assigned_ratio": assigned_ratio,
+        "total_regions": total_regions,
+    }
+
+
+def _fill_missing_qids_from_fallback(
+    primary: SegmentationResult,
+    fallback: SegmentationResult,
+    expected_qids: list[str],
+) -> SegmentationResult:
+    primary_by_qid = _qid_regions_map(primary)
+    fallback_by_qid = _qid_regions_map(fallback)
+    extras: dict[str, list[BBox]] = {}
+    expected_set = set(expected_qids)
+    for qr in primary.questions:
+        if qr.qid not in expected_set:
+            extras.setdefault(qr.qid, []).extend(qr.regions)
+    for qr in fallback.questions:
+        if qr.qid not in expected_set and qr.qid not in extras:
+            extras.setdefault(qr.qid, []).extend(qr.regions)
+
+    out: list[QuestionRegion] = []
+    for qid in expected_qids:
+        regions = primary_by_qid.get(qid) or fallback_by_qid.get(qid, [])
+        out.append(QuestionRegion(
+            qid=qid,
+            regions=sorted(regions, key=lambda r: (r.page, r.bbox[1], r.bbox[0])),
+        ))
+    for qid, regions in extras.items():
+        out.append(QuestionRegion(
+            qid=qid,
+            regions=sorted(regions, key=lambda r: (r.page, r.bbox[1], r.bbox[0])),
+        ))
+    return SegmentationResult(questions=out)
+
+
 def _format_question_block(q: dict) -> str:
     """单题的说明文字，用于「每题文字后紧接该题题目图」的段落。"""
     idx = q.get("question_index")
@@ -869,6 +925,11 @@ def _process_one_pdf_sync(
     expected_qids = [q.get("qid", "") for q in q_dicts if q.get("qid")]
     strategy = getattr(cfg.assignment_segmentation, "strategy", "global")
     seg_result: SegmentationResult | None = None
+    segmentation_meta: dict[str, Any] = {
+        "requested_strategy": strategy,
+        "fallback_attempted": False,
+        "fallback_used": False,
+    }
 
     if strategy == "page_by_page":
         graph = build_segmentation_graph(cfg)
@@ -884,7 +945,7 @@ def _process_one_pdf_sync(
         if seg_result is None:
             return (canonical, None)
     elif strategy == "band_assign":
-        seg_result = _run_band_assignment_segmentation(
+        band_result = _run_band_assignment_segmentation(
             cfg,
             q_dicts,
             pdf_path,
@@ -892,8 +953,9 @@ def _process_one_pdf_sync(
             page_dims,
             expected_qids,
         )
-        if seg_result is None:
+        if band_result is None:
             logger.warning("Falling back to page-by-page bbox segmentation for %s", pdf_path)
+            segmentation_meta["fallback_attempted"] = True
             graph = build_segmentation_graph(cfg)
             seg_result = _run_page_by_page_segmentation(
                 graph.compile(),
@@ -906,6 +968,61 @@ def _process_one_pdf_sync(
             )
             if seg_result is None:
                 return (canonical, None)
+            segmentation_meta["fallback_used"] = True
+            segmentation_meta["fallback_mode"] = "replace_after_band_assign_failure"
+            segmentation_meta["page_by_page_fallback"] = _segmentation_diagnostics(seg_result, expected_qids)
+        else:
+            band_diag = _segmentation_diagnostics(band_result, expected_qids)
+            segmentation_meta["band_assign"] = band_diag
+            seg_result = band_result
+            should_try_fallback = (
+                cfg.assignment_segmentation.band_assign_fill_missing_with_page_by_page
+                and bool(band_diag["missing_qids"])
+            )
+            if should_try_fallback:
+                logger.info(
+                    "Band assignment left missing qids for %s: %s; trying page-by-page fallback",
+                    pdf_path,
+                    ", ".join(band_diag["missing_qids"]),
+                )
+                graph = build_segmentation_graph(cfg)
+                segmentation_meta["fallback_attempted"] = True
+                fallback_result = _run_page_by_page_segmentation(
+                    graph.compile(),
+                    pdf_path=pdf_path,
+                    q_dicts=q_dicts,
+                    page_paths=page_paths,
+                    page_dims=page_dims,
+                    max_retry=max_retry,
+                    expected_qids=expected_qids,
+                )
+                if fallback_result is not None:
+                    fallback_diag = _segmentation_diagnostics(fallback_result, expected_qids)
+                    segmentation_meta["page_by_page_fallback"] = fallback_diag
+                    min_ratio = cfg.assignment_segmentation.band_assign_min_assigned_ratio
+                    if (
+                        band_diag["assigned_ratio"] < min_ratio
+                        and fallback_diag["assigned_ratio"] > band_diag["assigned_ratio"]
+                    ):
+                        seg_result = fallback_result
+                        segmentation_meta["fallback_used"] = True
+                        segmentation_meta["fallback_mode"] = "replace_sparse_band_assign"
+                    else:
+                        filled_result = _fill_missing_qids_from_fallback(
+                            band_result,
+                            fallback_result,
+                            expected_qids,
+                        )
+                        filled_diag = _segmentation_diagnostics(filled_result, expected_qids)
+                        if filled_diag["nonempty_qids"] > band_diag["nonempty_qids"]:
+                            seg_result = filled_result
+                            segmentation_meta["fallback_used"] = True
+                            segmentation_meta["fallback_mode"] = "fill_missing_qids"
+                            segmentation_meta["filled"] = filled_diag
+                        else:
+                            segmentation_meta["fallback_mode"] = "no_improvement"
+                else:
+                    segmentation_meta["fallback_mode"] = "page_by_page_failed"
     else:
         graph = build_segmentation_graph(cfg)
         app = graph.compile()
@@ -935,6 +1052,7 @@ def _process_one_pdf_sync(
     if seg_result is None:
         return (canonical, None)
 
+    segmentation_meta["before_postprocess"] = _segmentation_diagnostics(seg_result, expected_qids)
     seg_result = _postprocess_segmentation_result(
         seg_result,
         page_dims,
@@ -942,12 +1060,14 @@ def _process_one_pdf_sync(
         cfg.assignment_segmentation.postprocess,
         expected_qids,
     )
+    segmentation_meta["after_postprocess"] = _segmentation_diagnostics(seg_result, expected_qids)
     # 持久化 for_llm 坐标系下的 segment，供人工重新切分界面加载与保存
     cache_dir = get_answers_dir() / canonical / "_pages"
     segments_path = cache_dir / "segments.json"
     segments_data = {
         "dimensions": page_dims,
         "strategy": strategy,
+        "diagnostics": segmentation_meta,
         "postprocess": cfg.assignment_segmentation.postprocess.model_dump(),
         "questions": [
             {"qid": qr.qid, "regions": [{"page": r.page, "bbox": r.bbox} for r in qr.regions]}
