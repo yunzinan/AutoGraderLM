@@ -66,8 +66,8 @@ Open **http://localhost:8081** in your browser.
 Use different config files per assignment:
 
 ```bash
-python main.py -c config_hw1.yaml
-python main.py -c config_hw2.yaml
+python main.py -c config.assignment1.yaml
+python main.py -c config.assignment2.yaml
 ```
 
 ---

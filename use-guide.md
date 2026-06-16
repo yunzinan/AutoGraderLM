@@ -60,7 +60,7 @@ OPENAI_API_KEY=your-api-key-here
 
 ### 2.2 作业配置文件
 
-每次作业使用一个 YAML 配置文件。可从 `config.example.yaml` 复制为 `config.yaml`，或为不同作业维护本地配置文件（如 `config_hw1.yaml`、`config_hw2.yaml`；这些文件默认不纳入 Git），主要字段说明：
+每次作业使用一个 YAML 配置文件。可从 `config.example.yaml` 复制为 `config.yaml`，或为不同作业维护本地配置文件（如 `config.assignment1.yaml`、`config.assignment2.yaml`；这些文件默认不纳入 Git），主要字段说明：
 
 | 配置项 | 说明 |
 |--------|------|
@@ -241,8 +241,8 @@ assignment_example/
 启动时指定不同的配置文件：
 
 ```bash
-python main.py -c config_hw1.yaml   # 本地作业 1 配置
-python main.py -c config_hw2.yaml   # 本地作业 2 配置
+python main.py -c config.assignment1.yaml   # 本地作业 1 配置
+python main.py -c config.assignment2.yaml   # 本地作业 2 配置
 ```
 
 ### Q2：LLM 调用失败怎么办？

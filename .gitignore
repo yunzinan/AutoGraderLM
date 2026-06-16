@@ -2,6 +2,7 @@
 *.xls
 .env
 config_hw*.yaml
+config.assignment*.yaml
 hw[0-9]*/
 res
 questions
