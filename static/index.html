@@ -1672,7 +1672,7 @@ createApp({
       const ext = blob.type === 'image/jpeg' ? 'jpg' : 'png';
       fd.append('file', blob, `image.${ext}`);
       const endpoint = kind === 'question' ? 'upload_question_image' : 'upload_example_image';
-      const res = await fetch(`/api/questions/${qid}/${endpoint}`, { method: 'POST', body: fd });
+      const res = await fetch(`/api/questions/${encodeURIComponent(qid)}/${endpoint}`, { method: 'POST', body: fd });
       if (!res.ok) { showToast('上传失败', 'error'); throw new Error(await res.text()); }
       showToast('上传成功');
     }
@@ -1692,7 +1692,7 @@ createApp({
     }
 
     async function persistQuestion(q, { silent = false } = {}) {
-      const res = await api(`/api/questions/${q.qid}`, {
+      const res = await api(`/api/questions/${encodeURIComponent(q.qid)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildQuestionPostBody(q))
@@ -1800,7 +1800,7 @@ createApp({
 
     async function deleteQuestion(qid) {
       if (!confirm(`确认删除 ${qid}？`)) return;
-      const res = await api(`/api/questions/${qid}`, { method: 'DELETE' });
+      const res = await api(`/api/questions/${encodeURIComponent(qid)}`, { method: 'DELETE' });
       if (res.error) showToast(res.error || '删除失败', 'error');
       else { showToast('删除成功'); await loadQuestions(); }
     }
@@ -1811,7 +1811,7 @@ createApp({
       const fd = new FormData();
       fd.append('file', file);
       const endpoint = kind === 'question' ? 'upload_question_image' : 'upload_example_image';
-      const res = await fetch(`/api/questions/${qid}/${endpoint}`, { method: 'POST', body: fd });
+      const res = await fetch(`/api/questions/${encodeURIComponent(qid)}/${endpoint}`, { method: 'POST', body: fd });
       if (!res.ok) { showToast('上传失败', 'error'); return; }
       showToast('上传成功');
       await loadQuestions();
@@ -1957,7 +1957,7 @@ createApp({
       currentResult.value = null;
       try {
         const qs = forceRefresh ? `?_=${Date.now()}` : '';
-        const data = await api(`/api/results/${selectedStudent.value}${qs}`);
+        const data = await api(`/api/results/${encodeURIComponent(selectedStudent.value)}${qs}`);
         currentResult.value = data && !data.error ? data : null;
       } finally {
         studentResultLoading.value = false;
@@ -1966,7 +1966,7 @@ createApp({
 
     async function submitReview(item) {
       const stem = item.filename.replace(/\.pdf$/i, '');
-      const res = await api(`/api/review/${stem}/${item.qid}`, {
+      const res = await api(`/api/review/${encodeURIComponent(stem)}/${encodeURIComponent(item.qid)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
