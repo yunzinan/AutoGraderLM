@@ -7,42 +7,72 @@ import shutil
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from autograder.config import get_questions_dir
 from autograder.models import QuestionConfig
+from autograder.path_utils import require_safe_path_segment
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
 
 
-def _q_dir(qid: str) -> Path:
-    d = get_questions_dir() / qid
-    d.mkdir(parents=True, exist_ok=True)
+def _safe_qid(qid: str) -> str:
+    try:
+        return require_safe_path_segment(qid, "qid")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _safe_image_filename(filename: str) -> str:
+    try:
+        return require_safe_path_segment(filename, "image filename")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _q_dir(qid: str, *, create: bool = True) -> Path:
+    safe_qid = _safe_qid(qid)
+    d = get_questions_dir() / safe_qid
+    if create:
+        d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def _normalize_image_path(path: str, qid: str) -> str:
     """将绝对路径规范为相对路径 questions/{qid}/{filename}，供前端 /files/ + path 使用。"""
+    safe_qid = _safe_qid(qid)
     p = Path(path)
-    if not p.is_absolute():
-        return path
-    return f"questions/{qid}/{p.name}"
+    if p.is_absolute():
+        return f"questions/{safe_qid}/{p.name}"
+    parts = p.parts
+    if len(parts) == 1:
+        filename = _safe_image_filename(parts[0])
+        return f"questions/{safe_qid}/{filename}"
+    if (
+        len(parts) == 3
+        and parts[0] == "questions"
+        and parts[1] == safe_qid
+        and _safe_image_filename(parts[2])
+    ):
+        return f"questions/{safe_qid}/{parts[2]}"
+    raise HTTPException(status_code=400, detail=f"Invalid image path: {path!r}")
 
 
 def _load_config(qid: str) -> QuestionConfig | None:
-    cfg_path = _q_dir(qid) / "config.json"
+    safe_qid = _safe_qid(qid)
+    cfg_path = _q_dir(safe_qid, create=False) / "config.json"
     if not cfg_path.exists():
         return None
     q = QuestionConfig.model_validate_json(cfg_path.read_text(encoding="utf-8"))
     # 兼容旧配置：绝对路径转为相对路径，保证前端 /files/ + path 正确
-    q.question_images = [_normalize_image_path(p, qid) for p in (q.question_images or [])]
-    q.example_answer_images = [_normalize_image_path(p, qid) for p in (q.example_answer_images or [])]
+    q.question_images = [_normalize_image_path(p, safe_qid) for p in (q.question_images or [])]
+    q.example_answer_images = [_normalize_image_path(p, safe_qid) for p in (q.example_answer_images or [])]
     return q
 
 
 def _save_config(q: QuestionConfig) -> None:
-    cfg_path = _q_dir(q.qid) / "config.json"
+    cfg_path = _q_dir(q.qid, create=True) / "config.json"
     cfg_path.write_text(q.model_dump_json(indent=2), encoding="utf-8")
 
 
@@ -83,20 +113,21 @@ class QuestionUpdate(BaseModel):
 
 @router.post("/{qid}")
 def upsert_question(qid: str, body: QuestionUpdate) -> QuestionConfig:
-    existing = _load_config(qid)
+    safe_qid = _safe_qid(qid)
+    existing = _load_config(safe_qid)
     question_images = body.question_images if body.question_images is not None else (existing.question_images if existing else [])
     example_answer_images = (
         body.example_answer_images if body.example_answer_images is not None else (existing.example_answer_images if existing else [])
     )
     q = QuestionConfig(
-        qid=qid,
+        qid=safe_qid,
         question_index=body.question_index,
         score=body.score,
         rubric=body.rubric,
         question_text=body.question_text,
         example_answer_text=body.example_answer_text,
-        question_images=[_normalize_image_path(p, qid) for p in (question_images or [])],
-        example_answer_images=[_normalize_image_path(p, qid) for p in (example_answer_images or [])],
+        question_images=[_normalize_image_path(p, safe_qid) for p in (question_images or [])],
+        example_answer_images=[_normalize_image_path(p, safe_qid) for p in (example_answer_images or [])],
     )
     _save_config(q)
     return q
@@ -104,7 +135,7 @@ def upsert_question(qid: str, body: QuestionUpdate) -> QuestionConfig:
 
 @router.delete("/{qid}")
 def delete_question(qid: str) -> dict:
-    d = get_questions_dir() / qid
+    d = _q_dir(qid, create=False)
     if d.exists():
         shutil.rmtree(d)
     return {"ok": True}
@@ -112,14 +143,15 @@ def delete_question(qid: str) -> dict:
 
 @router.post("/{qid}/upload_question_image")
 async def upload_question_image(qid: str, file: UploadFile = File(...)) -> dict:
-    d = _q_dir(qid)
+    safe_qid = _safe_qid(qid)
+    d = _q_dir(safe_qid)
     existing = sorted(d.glob("question_*.png"))
     idx = len(existing)
     dest = d / f"question_{idx}.png"
     dest.write_bytes(await file.read())
     # 存相对路径，前端用 /files/ + path 访问
-    rel_path = f"questions/{qid}/{dest.name}"
-    q = _load_config(qid) or QuestionConfig(qid=qid, score=0)
+    rel_path = f"questions/{safe_qid}/{dest.name}"
+    q = _load_config(safe_qid) or QuestionConfig(qid=safe_qid, score=0)
     q.question_images.append(rel_path)
     _save_config(q)
     return {"path": rel_path}
@@ -127,13 +159,14 @@ async def upload_question_image(qid: str, file: UploadFile = File(...)) -> dict:
 
 @router.post("/{qid}/upload_example_image")
 async def upload_example_image(qid: str, file: UploadFile = File(...)) -> dict:
-    d = _q_dir(qid)
+    safe_qid = _safe_qid(qid)
+    d = _q_dir(safe_qid)
     existing = sorted(d.glob("example_*.png"))
     idx = len(existing)
     dest = d / f"example_{idx}.png"
     dest.write_bytes(await file.read())
-    rel_path = f"questions/{qid}/{dest.name}"
-    q = _load_config(qid) or QuestionConfig(qid=qid, score=0)
+    rel_path = f"questions/{safe_qid}/{dest.name}"
+    q = _load_config(safe_qid) or QuestionConfig(qid=safe_qid, score=0)
     q.example_answer_images.append(rel_path)
     _save_config(q)
     return {"path": rel_path}

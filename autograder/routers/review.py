@@ -6,11 +6,12 @@ import re
 import unicodedata
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from autograder.config import get_config, get_answers_dir, get_results_dir
 from autograder.models import StudentResult, _now_iso
+from autograder.path_utils import is_safe_path_segment, require_safe_path_segment
 from autograder.pipeline.grading import load_all_results, load_student_result
 from autograder.routers.questions import load_all_questions
 
@@ -31,9 +32,18 @@ def _normalize_stem(s: str) -> str:
     return s.removesuffix(".pdf") if s.endswith(".pdf") else s
 
 
+def _safe_segment(value: str, label: str) -> str:
+    try:
+        return require_safe_path_segment(value, label)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 def _resolve_stem_dir(stem: str) -> Path | None:
     """解析 stem 对应的 answers 下实际目录（与 pipeline 一致，处理 Unicode 等）。"""
     stem = _normalize_stem(stem)
+    if not is_safe_path_segment(stem):
+        return None
     answers_dir = get_answers_dir()
     if not answers_dir.exists():
         return None
@@ -50,7 +60,11 @@ def _get_answer_paths_from_disk(stem: str, qid: str) -> list[str]:
     stem_dir = _resolve_stem_dir(stem)
     if not stem_dir or not stem_dir.is_dir():
         return []
-    files = sorted(stem_dir.glob(f"{qid}-*.png"), key=_answer_file_sort_key)
+    _safe_segment(qid, "qid")
+    files = sorted(
+        (f for f in stem_dir.glob("*.png") if f.name.startswith(f"{qid}-")),
+        key=_answer_file_sort_key,
+    )
     return [f"answers/{stem_dir.name}/{f.name}" for f in files]
 
 
@@ -58,7 +72,8 @@ def _get_answer_paths_from_disk(stem: str, qid: str) -> list[str]:
 def get_review_item(filename_stem: str, qid: str) -> dict:
     """获取指定学生指定题目的评阅记录，用于人工复核（不论置信度）。
     作答图片路径始终从磁盘 answers 目录读取，保证人工重新切分后、服务重启后仍为最新。"""
-    filename_stem = _normalize_stem(filename_stem)
+    filename_stem = _safe_segment(_normalize_stem(filename_stem), "filename_stem")
+    qid = _safe_segment(qid, "qid")
     sr = load_student_result(filename_stem)
     if not sr:
         return {"error": "未找到该学生的评阅结果"}
@@ -145,7 +160,8 @@ class ReviewUpdate(BaseModel):
 @router.put("/{filename_stem}/{qid}")
 def update_review(filename_stem: str, qid: str, body: ReviewUpdate) -> dict:
     """Teacher manually updates a grading record."""
-    filename_stem = _normalize_stem(filename_stem)
+    filename_stem = _safe_segment(_normalize_stem(filename_stem), "filename_stem")
+    qid = _safe_segment(qid, "qid")
     path = get_results_dir() / f"{filename_stem}.json"
     if not path.exists():
         return {"error": "结果文件不存在"}

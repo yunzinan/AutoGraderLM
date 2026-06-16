@@ -15,6 +15,7 @@ from langgraph.graph import END, StateGraph
 from autograder.config import AppConfig, get_results_dir, resolve_assignment_path
 from autograder.llm import build_llm, build_vision_message_segmented, extract_json, invoke_with_log
 from autograder.models import GradingOutput, GradingRecord, QuestionConfig, StudentResult, _now_iso
+from autograder.path_utils import is_safe_path_segment
 from autograder.pdf_utils import parse_student_info, student_canonical_stem
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,8 @@ def _save_student_result(result: StudentResult) -> None:
 
 
 def load_student_result(filename_stem: str) -> StudentResult | None:
+    if not is_safe_path_segment(filename_stem):
+        return None
     path = get_results_dir() / f"{filename_stem}.json"
     if not path.exists():
         return None

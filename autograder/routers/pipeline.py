@@ -18,6 +18,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, Response
 
 from autograder.config import get_config, get_answers_dir, get_results_dir, resolve_assignment_path
+from autograder.path_utils import is_safe_path_segment
 from autograder.pdf_utils import student_canonical_stem
 from autograder.models import PipelineStatus, QuestionReport
 from autograder.pipeline.grading import (
@@ -939,6 +940,8 @@ def _resolve_stem_for_answers(stem: str) -> str | None:
     """解析 stem 对应的 answers 下实际目录名（处理 Unicode 规范化差异、.pdf 后缀）。"""
     import unicodedata
     stem = stem.removesuffix(".pdf") if stem.endswith(".pdf") else stem
+    if not is_safe_path_segment(stem):
+        return None
     answers_dir = get_answers_dir()
     if not answers_dir.exists():
         return None
@@ -996,6 +999,8 @@ def segment_editor_get_assignment(stem: str) -> dict:
 def segment_editor_save_assignment(stem: str, body: dict = Body(...)) -> dict:
     """保存人工修改的 segment，并重新生成答案图。"""
     global _answer_map
+    if not is_safe_path_segment(stem):
+        return {"error": "无效的作业目录名"}
     dimensions = body.get("dimensions") or []
     questions = body.get("questions") or []
     if not dimensions and not questions:
@@ -1087,6 +1092,8 @@ async def cancel_pipeline() -> dict:
 async def regrade_single(stem: str, qid: str) -> dict:
     """对指定学生的指定题目进行 AI 重新评阅。"""
     stem = stem.removesuffix(".pdf") if stem.endswith(".pdf") else stem
+    if not is_safe_path_segment(stem) or not is_safe_path_segment(qid):
+        return {"error": "无效的作业目录名或题目编号"}
     global _answer_map
     if not _answer_map:
         _answer_map = _build_answer_map_from_disk()
