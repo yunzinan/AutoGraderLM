@@ -33,11 +33,12 @@ conda activate autograder
 pip install -r requirements.txt
 
 # Create .env with your LLM API credentials
-echo "OPENAI_API_KEY=sk-your-key" > .env
+echo "OPENAI_API_KEY=your-api-key" > .env
 echo "OPENAI_BASE_URL=https://api.openai.com/v1" >> .env
 
-# Run (specify config for the assignment)
-python main.py -c config_hw2.yaml
+# Copy and edit the example assignment config, then run
+cp config.example.yaml config.yaml
+python main.py -c config.yaml
 ```
 
 Open **http://localhost:8081** in your browser.
@@ -128,8 +129,7 @@ See [requirements.txt](requirements.txt) for versions.
 ```
 AutoGraderLM/
 ├── main.py                 # Entry point
-├── config_hw1.yaml         # Assignment 1 config
-├── config_hw2.yaml         # Assignment 2 config
+├── config.example.yaml     # Generic config template
 ├── .env                    # OPENAI_API_KEY, OPENAI_BASE_URL (gitignored)
 ├── autograder/
 │   ├── app.py              # FastAPI app factory
@@ -154,15 +154,14 @@ AutoGraderLM/
 │   └── report.jinja        # Report prompt
 ├── static/
 │   └── index.html          # SPA (Vue 3)
-├── demand-analysis.md      # Requirements (Chinese)
 ├── use-guide.md            # Usage guide (Chinese)
 └── requirements.txt
 ```
 
-Per-assignment data (under `assignment_path`, e.g. `hw2/`):
+Per-assignment data (under `assignment_path`, e.g. `assignment_example/`):
 
 ```
-hw2/
+assignment_example/
 ├── res/           # Student PDFs ({学号}_{姓名}.pdf or {学号}_{姓名}_*.pdf; 学号_姓名 used as key)
 ├── in.xls         # Student roster (学号, 姓名, 成绩, 评语)
 ├── questions/     # Question configs (Q1, Q2, ...)

@@ -1,49 +1,47 @@
-# AutoGraderLM Configuration
+# AutoGraderLM example configuration.
+# Copy this file to config.yaml or another local YAML file, then adjust paths/model names.
 
-assignment_name: "Assignment 2"
-assignment_path: "./hw2/"
+assignment_name: "Example Assignment"
+assignment_path: "./assignment_example/"
 
 web_server:
   port: 8081
-
 
 assignment_configuration:
   pdf_folder_path: "res/"
   excel_in_path: "in.xls"
 
 assignment_segmentation:
-  num_workers: 10
+  num_workers: 5
   max_retry: 3
-  llm: 
-    model: "gpt-5.4"
+  llm:
+    model: "your-vision-model"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/segmentation.jinja"
-  
 
 assignment_grading:
-  num_workers: 10
+  num_workers: 5
   max_retry: 3
-  llm: 
-    model: "gpt-5.4"
+  llm:
+    model: "your-vision-model"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/grading.jinja"
-  
-# 全量评分后：得分 <= 该比例 × 题目总分的作答自动进入人工复核列表
+
 assignment_regrade:
   add_to_regrade_when_below: 0.20
 
-
 assignment_report:
-  num_workers: 5
+  num_workers: 3
+  vision_max_images: 50
+  vision_max_image_bytes: 6291456
   llm:
-    model: "gpt-5.4"
+    model: "your-vision-model"
     endpoint: "/v1/chat/completions"
     prompt_template: "./prompts/report.jinja"
   excel_out_path: "out.xls"
 
-# 大模型对话日志，用于后台调试（记录请求 prompt 与响应内容）
 llm_log:
-  enabled: true
+  enabled: false
   path: "./logs/llm_dialogue.log"
-
-
+  response_path: ""
+  fsync: false

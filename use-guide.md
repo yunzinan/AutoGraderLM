@@ -24,8 +24,9 @@ conda activate autograder
 # 3. 安装依赖
 pip install -r requirements.txt
 
-# 4. 启动服务（指定配置文件）
-python main.py -c config_hw2.yaml
+# 4. 复制示例配置并按当前作业修改后启动服务
+cp config.example.yaml config.yaml
+python main.py -c config.yaml
 ```
 
 ### 1.3 访问应用
@@ -51,7 +52,7 @@ http://localhost:8081
 OPENAI_BASE_URL=https://api.openai.com/v1
 
 # API Key（必填）
-OPENAI_API_KEY=sk-your-api-key-here
+OPENAI_API_KEY=your-api-key-here
 ```
 
 - **OPENAI_BASE_URL**：若使用第三方代理或自建服务，填写其 base URL（如 `https://your-proxy.com/v1`）
@@ -59,12 +60,12 @@ OPENAI_API_KEY=sk-your-api-key-here
 
 ### 2.2 作业配置文件
 
-每次作业使用一个 YAML 配置文件（如 `config_hw1.yaml`、`config_hw2.yaml`），主要字段说明：
+每次作业使用一个 YAML 配置文件。可从 `config.example.yaml` 复制为 `config.yaml`，或为不同作业维护本地配置文件（如 `config_hw1.yaml`、`config_hw2.yaml`；这些文件默认不纳入 Git），主要字段说明：
 
 | 配置项 | 说明 |
 |--------|------|
 | `assignment_name` | 作业名称，用于界面展示 |
-| `assignment_path` | 作业根目录，如 `./hw2/` |
+| `assignment_path` | 作业根目录，如 `./assignment_example/` |
 | `web_server.port` | Web 服务端口 |
 | `assignment_configuration.pdf_folder_path` | 学生 PDF 作业存放路径（相对于 assignment_path） |
 | `assignment_configuration.excel_in_path` | 学生名单 Excel 路径（含学号、姓名等） |
@@ -78,9 +79,9 @@ OPENAI_API_KEY=sk-your-api-key-here
 在 `assignment_path` 下需准备：
 
 ```
-hw2/
+assignment_example/
 ├── res/           # 学生 PDF 作业（由 pdf_folder_path 指定）
-│   ├── 2023010756_彭芊.pdf   # 推荐：学号_姓名.pdf，便于覆盖更新
+│   ├── 2023000001_张三.pdf   # 推荐：学号_姓名.pdf，便于覆盖更新
 │   └── ...                  # 也支持 学号_姓名_随机码.pdf，随机码会被忽略
 ├── in.xls         # 学生名单（由 excel_in_path 指定）
 └── (以下由系统自动创建)
@@ -239,8 +240,8 @@ hw2/
 启动时指定不同的配置文件：
 
 ```bash
-python main.py -c config_hw1.yaml   # 作业 1
-python main.py -c config_hw2.yaml   # 作业 2
+python main.py -c config_hw1.yaml   # 本地作业 1 配置
+python main.py -c config_hw2.yaml   # 本地作业 2 配置
 ```
 
 ### Q2：LLM 调用失败怎么办？

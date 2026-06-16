@@ -1,6 +1,8 @@
 *.xlsx
 *.xls
 .env
+config_hw*.yaml
+hw[0-9]*/
 res
 questions
 answers
@@ -8,4 +10,3 @@ results
 logs
 __pycache__
 .DS_Store
-

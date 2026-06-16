@@ -55,7 +55,11 @@ def create_app() -> FastAPI:
     @app.get("/api/config")
     def api_config():
         cfg = get_config()
-        return cfg.model_dump()
+        return cfg.model_dump(exclude={
+            "assignment_segmentation": {"llm": {"api_key"}},
+            "assignment_grading": {"llm": {"api_key"}},
+            "assignment_report": {"llm": {"api_key"}},
+        })
 
     base = get_assignment_path()
     for dir_name in ("questions", "answers", "results"):
