@@ -26,6 +26,7 @@ class SegState(TypedDict):
     pdf_path: str
     page_image_paths: list[str]
     page_dimensions: list[tuple[int, int]]  # 每页 (width, height)，与 page_image_paths 一一对应
+    page_numbers: list[int]
     questions: list[dict]
     result: dict | None
     retry_count: int
@@ -252,6 +253,44 @@ def _postprocess_segmentation_result(
                 pass
 
 
+def _normalize_result_page_numbers(seg_result: SegmentationResult, page_numbers: list[int]) -> SegmentationResult:
+    """Repair page numbers when a single-page call returns page=1 for a later PDF page."""
+    if len(page_numbers) != 1:
+        return seg_result
+    actual_page = page_numbers[0]
+    for qr in seg_result.questions:
+        for region in qr.regions:
+            if region.page != actual_page:
+                region.page = actual_page
+    return seg_result
+
+
+def _merge_segmentation_results(
+    results: list[SegmentationResult],
+    expected_qids: list[str],
+) -> SegmentationResult:
+    """Merge page-level segmentation results while preserving configured qid order."""
+    by_qid: dict[str, list[BBox]] = {qid: [] for qid in expected_qids}
+    extras: dict[str, list[BBox]] = {}
+    for result in results:
+        for qr in result.questions:
+            target = by_qid.setdefault(qr.qid, []) if qr.qid in by_qid else extras.setdefault(qr.qid, [])
+            target.extend(qr.regions)
+
+    out: list[QuestionRegion] = []
+    for qid in expected_qids:
+        out.append(QuestionRegion(
+            qid=qid,
+            regions=sorted(by_qid.get(qid, []), key=lambda r: (r.page, r.bbox[1], r.bbox[0])),
+        ))
+    for qid, regions in extras.items():
+        out.append(QuestionRegion(
+            qid=qid,
+            regions=sorted(regions, key=lambda r: (r.page, r.bbox[1], r.bbox[0])),
+        ))
+    return SegmentationResult(questions=out)
+
+
 def _format_question_block(q: dict) -> str:
     """单题的说明文字，用于「每题文字后紧接该题题目图」的段落。"""
     idx = q.get("question_index")
@@ -278,6 +317,7 @@ def build_segmentation_graph(cfg: AppConfig) -> StateGraph:
         questions = state["questions"]
         page_paths = state["page_image_paths"]
         page_dimensions = state["page_dimensions"]
+        page_numbers = state["page_numbers"]
 
         # 输入结构：intro → [每题文字 + 该题题目图] → tail（任务/输出/注意事项）→ 图片尺寸+「以下是页面图」→ 页面图
         intro_text = intro_tpl.render(num_questions=len(questions))
@@ -293,12 +333,20 @@ def build_segmentation_graph(cfg: AppConfig) -> StateGraph:
 
         tail_text = tail_tpl.render()
         segments.append((tail_text, []))
-        pages_intro_text = pages_intro_tpl.render(page_dimensions=page_dimensions)
+        page_infos = [
+            {"page": page_no, "width": dim[0], "height": dim[1]}
+            for page_no, dim in zip(page_numbers, page_dimensions)
+        ]
+        pages_intro_text = pages_intro_tpl.render(page_dimensions=page_dimensions, page_infos=page_infos)
         segments.append((pages_intro_text, list(page_paths)))
 
         msg = build_vision_message_segmented(segments)
         try:
-            ctx = {"stage": "segmentation", "pdf": Path(state["pdf_path"]).stem}
+            ctx = {
+                "stage": "segmentation",
+                "pdf": Path(state["pdf_path"]).stem,
+                "pages": ",".join(str(n) for n in page_numbers),
+            }
             resp = invoke_with_log(llm, [msg], ctx)
             raw = extract_json(resp.content)
             if raw is None:
@@ -307,7 +355,7 @@ def build_segmentation_graph(cfg: AppConfig) -> StateGraph:
                     "retry_count": state["retry_count"] + 1,
                     "error": "JSON parse failed",
                 }
-            parsed = SegmentationResult(**raw)
+            parsed = _normalize_result_page_numbers(SegmentationResult(**raw), page_numbers)
             return {"result": parsed.model_dump(), "retry_count": state["retry_count"] + 1, "error": ""}
         except Exception as e:
             logger.exception("Segmentation LLM call failed for %s", state["pdf_path"])
@@ -347,29 +395,66 @@ def _process_one_pdf_sync(
     max_retry = cfg.assignment_segmentation.max_retry
 
     page_paths, page_dims = _render_and_cache_pages(pdf_path)
-    init_state: SegState = {
-        "pdf_path": pdf_path,
-        "page_image_paths": page_paths,
-        "page_dimensions": page_dims,
-        "questions": q_dicts,
-        "result": None,
-        "retry_count": 0,
-        "max_retry": max_retry,
-        "error": "",
-    }
-    final = app.invoke(init_state)
-
-    if final["result"] is None:
-        logger.error(
-            "Segmentation failed for %s after %d retries: %s",
-            pdf_path,
-            max_retry,
-            final.get("error"),
-        )
-        return (canonical, None)
-
     expected_qids = [q.get("qid", "") for q in q_dicts if q.get("qid")]
-    seg_result = SegmentationResult(**final["result"])
+    strategy = getattr(cfg.assignment_segmentation, "strategy", "global")
+
+    if strategy == "page_by_page":
+        page_results: list[SegmentationResult] = []
+        page_errors: list[str] = []
+        for page_idx, (page_path, page_dim) in enumerate(zip(page_paths, page_dims)):
+            page_no = page_idx + 1
+            init_state: SegState = {
+                "pdf_path": pdf_path,
+                "page_image_paths": [page_path],
+                "page_dimensions": [page_dim],
+                "page_numbers": [page_no],
+                "questions": q_dicts,
+                "result": None,
+                "retry_count": 0,
+                "max_retry": max_retry,
+                "error": "",
+            }
+            final = app.invoke(init_state)
+            if final["result"] is None:
+                err = f"page {page_no}: {final.get('error', 'unknown')}"
+                page_errors.append(err)
+                logger.warning("Segmentation failed for %s %s", pdf_path, err)
+                continue
+            page_results.append(SegmentationResult(**final["result"]))
+
+        if not page_results:
+            logger.error(
+                "Page-by-page segmentation failed for %s after %d pages: %s",
+                pdf_path,
+                len(page_paths),
+                "; ".join(page_errors) or "unknown",
+            )
+            return (canonical, None)
+        seg_result = _merge_segmentation_results(page_results, expected_qids)
+    else:
+        init_state: SegState = {
+            "pdf_path": pdf_path,
+            "page_image_paths": page_paths,
+            "page_dimensions": page_dims,
+            "page_numbers": list(range(1, len(page_paths) + 1)),
+            "questions": q_dicts,
+            "result": None,
+            "retry_count": 0,
+            "max_retry": max_retry,
+            "error": "",
+        }
+        final = app.invoke(init_state)
+
+        if final["result"] is None:
+            logger.error(
+                "Segmentation failed for %s after %d retries: %s",
+                pdf_path,
+                max_retry,
+                final.get("error"),
+            )
+            return (canonical, None)
+        seg_result = SegmentationResult(**final["result"])
+
     seg_result = _postprocess_segmentation_result(
         seg_result,
         page_dims,

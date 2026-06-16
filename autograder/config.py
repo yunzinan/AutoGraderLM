@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field
@@ -52,6 +52,7 @@ class SegmentationPostprocessConfig(BaseModel):
 
 
 class SegmentationConfig(BaseModel):
+    strategy: Literal["global", "page_by_page"] = "global"
     num_workers: int = 5
     max_retry: int = 3
     llm: LLMConfig = Field(default_factory=LLMConfig)

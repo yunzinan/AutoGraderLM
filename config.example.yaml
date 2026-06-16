@@ -14,6 +14,9 @@ assignment_configuration:
   excel_in_path: "in.xls"
 
 assignment_segmentation:
+  # Experimental branch option: page_by_page sends one answer page per LLM call,
+  # reducing visual overload and making the model solve a simpler localization task.
+  strategy: "page_by_page"
   num_workers: 5
   max_retry: 3
   postprocess:
