@@ -37,7 +37,7 @@ python main.py -c config.yaml
 http://localhost:8081
 ```
 
-端口号由配置文件中的 `web_server.port` 指定，默认为 8081。
+监听地址和端口号由配置文件中的 `web_server.host`、`web_server.port` 指定；默认仅监听本机 `127.0.0.1:8081`。
 
 ---
 
@@ -66,6 +66,7 @@ OPENAI_API_KEY=your-api-key-here
 |--------|------|
 | `assignment_name` | 作业名称，用于界面展示 |
 | `assignment_path` | 作业根目录，如 `./assignment_example/` |
+| `web_server.host` | Web 服务监听地址，默认 `127.0.0.1`；仅在可信局域网中才建议改为 `0.0.0.0` |
 | `web_server.port` | Web 服务端口 |
 | `assignment_configuration.pdf_folder_path` | 学生 PDF 作业存放路径（相对于 assignment_path） |
 | `assignment_configuration.excel_in_path` | 学生名单 Excel 路径（含学号、姓名等） |

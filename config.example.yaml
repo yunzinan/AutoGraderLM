@@ -5,6 +5,8 @@ assignment_name: "Example Assignment"
 assignment_path: "./assignment_example/"
 
 web_server:
+  # Use 0.0.0.0 only when intentionally exposing the app on a trusted LAN.
+  host: "127.0.0.1"
   port: 8081
 
 assignment_configuration:

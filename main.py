@@ -23,7 +23,7 @@ if __name__ == "__main__":
     cfg = get_config()
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host=cfg.web_server.host,
         port=cfg.web_server.port,
         reload=True,
     )
