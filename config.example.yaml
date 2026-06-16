@@ -14,9 +14,10 @@ assignment_configuration:
   excel_in_path: "in.xls"
 
 assignment_segmentation:
-  # Experimental branch option: page_by_page sends one answer page per LLM call,
-  # reducing visual overload and making the model solve a simpler localization task.
-  strategy: "page_by_page"
+  # Experimental branch option: band_assign detects local answer-band candidates,
+  # then asks the model to assign candidate IDs to question IDs instead of
+  # inventing exact bbox coordinates. Other options: global, page_by_page.
+  strategy: "band_assign"
   num_workers: 5
   max_retry: 3
   postprocess:
@@ -25,6 +26,8 @@ assignment_segmentation:
     vertical_margin: 28
     snap_to_content: true
     snap_to_ink_bands: true
+    candidate_bridge_gap: 36
+    candidate_max_bands: 96
   llm:
     model: "your-vision-model"
     endpoint: "/v1/chat/completions"

@@ -1,0 +1,35 @@
+## Candidate-Band Assignment Task
+
+You are not asked to draw bounding boxes. The answer page image below already has
+detected candidate answer bands labeled `B1`, `B2`, ...
+
+Page {{ page_no }} image size: width={{ width }}, height={{ height }}.
+
+Candidate bands:
+{% for c in candidates -%}
+- {{ c.id }}: bbox={{ c.bbox }}
+{% endfor %}
+
+Return which candidate bands belong to each configured question. Use the exact
+question IDs from the assignment configuration:
+{% for qid in expected_qids -%}
+- {{ qid }}
+{% endfor %}
+
+Rules:
+1. Return JSON only.
+2. Do not invent coordinates. Only choose candidate band IDs from the list.
+3. A question may use multiple candidate bands, especially when the answer has
+   several separated lines or formulas.
+4. If a question has no visible answer on this page, use an empty list.
+5. If the same student's answer continues across neighboring candidate bands,
+   include all of those bands.
+6. Do not include unrelated bands, page headers, marks, or another question's work.
+
+Output schema:
+{
+  "questions": [
+    {"qid": "Q1", "candidate_ids": ["B1", "B2"]},
+    {"qid": "Q2", "candidate_ids": []}
+  ]
+}

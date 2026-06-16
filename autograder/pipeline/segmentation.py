@@ -10,7 +10,7 @@ from typing import Any, TypedDict
 
 from jinja2 import Template
 from langgraph.graph import END, StateGraph
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from autograder.config import AppConfig, SegmentationPostprocessConfig, get_answers_dir, resolve_assignment_path
 from autograder.llm import build_llm, build_vision_message_segmented, extract_json, invoke_with_log
@@ -32,6 +32,12 @@ class SegState(TypedDict):
     retry_count: int
     max_retry: int
     error: str
+
+
+class CandidateBand(TypedDict):
+    id: str
+    page: int
+    bbox: list[int]
 
 
 def _resize_to_max_width(img, max_width: int):
@@ -172,6 +178,228 @@ def _detect_ink_bands(
     if active_start is not None and last_active_y is not None:
         bands.append((active_start, last_active_y + 1))
     return bands
+
+
+def _merge_band_ranges(
+    ink_bands: list[tuple[int, int]],
+    bridge_gap: int,
+) -> list[tuple[int, int]]:
+    """Merge nearby vertical ink bands into candidate answer blocks."""
+    if not ink_bands:
+        return []
+    merged: list[tuple[int, int]] = []
+    cur_top, cur_bottom = ink_bands[0]
+    for top, bottom in ink_bands[1:]:
+        if top - cur_bottom <= bridge_gap:
+            cur_bottom = max(cur_bottom, bottom)
+            continue
+        merged.append((cur_top, cur_bottom))
+        cur_top, cur_bottom = top, bottom
+    merged.append((cur_top, cur_bottom))
+    return merged
+
+
+def _limit_band_ranges(
+    ranges: list[tuple[int, int]],
+    max_count: int,
+) -> list[tuple[int, int]]:
+    """Keep prompts bounded by merging the closest adjacent ranges first."""
+    ranges = list(ranges)
+    while len(ranges) > max_count and len(ranges) > 1:
+        best_idx = 0
+        best_gap = ranges[1][0] - ranges[0][1]
+        for idx in range(1, len(ranges) - 1):
+            gap = ranges[idx + 1][0] - ranges[idx][1]
+            if gap < best_gap:
+                best_idx = idx
+                best_gap = gap
+        merged = (
+            ranges[best_idx][0],
+            max(ranges[best_idx][1], ranges[best_idx + 1][1]),
+        )
+        ranges[best_idx:best_idx + 2] = [merged]
+    return ranges
+
+
+def _build_candidate_bands(
+    page_img: Image.Image,
+    *,
+    page_no: int,
+    pp_cfg: SegmentationPostprocessConfig,
+) -> list[CandidateBand]:
+    """Build deterministic answer-band candidates for LLM assignment."""
+    width, height = page_img.size
+    ink_bands = _detect_ink_bands(
+        page_img,
+        threshold=pp_cfg.ink_threshold,
+        min_ink_per_row=pp_cfg.band_min_ink_per_row,
+        gap_tolerance=pp_cfg.band_gap_tolerance,
+    )
+    ranges = _merge_band_ranges(ink_bands, pp_cfg.candidate_bridge_gap)
+    ranges = _limit_band_ranges(ranges, pp_cfg.candidate_max_bands)
+
+    candidates: list[CandidateBand] = []
+    for idx, (top, bottom) in enumerate(ranges, start=1):
+        y1 = max(0, top - pp_cfg.band_padding)
+        y2 = min(height, bottom + pp_cfg.band_padding)
+        if pp_cfg.full_width:
+            x1 = pp_cfg.horizontal_margin
+            x2 = max(pp_cfg.horizontal_margin + 1, width - pp_cfg.horizontal_margin)
+        else:
+            x1 = 0
+            x2 = width
+        bbox = _clamp_bbox([x1, y1, x2, y2], width, height)
+        if bbox is None:
+            continue
+        bbox = _ensure_min_height(bbox, width, height, pp_cfg.min_box_height)
+        candidates.append({"id": f"B{idx}", "page": page_no, "bbox": bbox})
+    return candidates
+
+
+def _save_candidate_overlay(
+    page_img: Image.Image,
+    candidates: list[CandidateBand],
+    path: Path,
+) -> None:
+    """Save an annotated page image with candidate IDs visible to the model."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    annotated = page_img.convert("RGBA")
+    draw = ImageDraw.Draw(annotated)
+    font = ImageFont.load_default()
+    colors = [
+        (220, 38, 38, 255),
+        (37, 99, 235, 255),
+        (5, 150, 105, 255),
+        (217, 119, 6, 255),
+        (124, 58, 237, 255),
+    ]
+
+    for idx, candidate in enumerate(candidates):
+        x1, y1, x2, y2 = candidate["bbox"]
+        color = colors[idx % len(colors)]
+        draw.rectangle((x1, y1, x2, y2), outline=color, width=3)
+        label = candidate["id"]
+        label_x = max(2, x1 + 4)
+        label_y = max(2, y1 + 4)
+        try:
+            text_box = draw.textbbox((label_x, label_y), label, font=font)
+        except AttributeError:
+            text_w, text_h = draw.textsize(label, font=font)
+            text_box = (label_x, label_y, label_x + text_w, label_y + text_h)
+        draw.rectangle(
+            (
+                text_box[0] - 2,
+                text_box[1] - 1,
+                text_box[2] + 2,
+                text_box[3] + 1,
+            ),
+            fill=(255, 255, 255, 230),
+        )
+        draw.text((label_x, label_y), label, fill=color, font=font)
+
+    annotated.convert("RGB").save(path)
+
+
+def _candidate_ids_from_value(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        raw_items = value
+    elif isinstance(value, str):
+        raw_items = value.replace(",", " ").replace(";", " ").split()
+    else:
+        raw_items = [value]
+
+    out: list[str] = []
+    for item in raw_items:
+        cid = str(item).strip().strip("\"'[](){}")
+        if not cid:
+            continue
+        if cid.isdigit():
+            cid = f"B{cid}"
+        cid = cid.upper()
+        if cid not in out:
+            out.append(cid)
+    return out
+
+
+def _regions_from_candidate_bands(
+    selected: list[CandidateBand],
+    pp_cfg: SegmentationPostprocessConfig,
+) -> list[BBox]:
+    if not selected:
+        return []
+    unique: list[CandidateBand] = []
+    seen: set[tuple[int, str]] = set()
+    for candidate in selected:
+        key = (candidate["page"], candidate["id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(candidate)
+    ordered = sorted(
+        unique,
+        key=lambda c: (c["page"], c["bbox"][1], c["bbox"][0]),
+    )
+    regions: list[BBox] = []
+    group: list[CandidateBand] = []
+
+    def flush_group() -> None:
+        if not group:
+            return
+        page = group[0]["page"]
+        left = min(c["bbox"][0] for c in group)
+        top = min(c["bbox"][1] for c in group)
+        right = max(c["bbox"][2] for c in group)
+        bottom = max(c["bbox"][3] for c in group)
+        regions.append(BBox(page=page, bbox=[left, top, right, bottom]))
+
+    for candidate in ordered:
+        if not group:
+            group = [candidate]
+            continue
+        prev = group[-1]
+        same_page = candidate["page"] == prev["page"]
+        gap = candidate["bbox"][1] - prev["bbox"][3]
+        if same_page and gap <= pp_cfg.band_bridge_gap:
+            group.append(candidate)
+            continue
+        flush_group()
+        group = [candidate]
+
+    flush_group()
+    return regions
+
+
+def _candidate_assignment_to_segmentation_result(
+    raw: dict | list,
+    candidates: list[CandidateBand],
+    pp_cfg: SegmentationPostprocessConfig,
+) -> SegmentationResult:
+    candidate_by_id = {c["id"].upper(): c for c in candidates}
+    if isinstance(raw, dict):
+        entries = raw.get("questions") or raw.get("assignments") or raw.get("answers") or []
+    else:
+        entries = raw
+    if not isinstance(entries, list):
+        entries = []
+
+    out: list[QuestionRegion] = []
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        qid = str(item.get("qid") or item.get("question_id") or item.get("question") or "").strip()
+        if not qid:
+            continue
+        ids_value = (
+            item.get("candidate_ids")
+            if "candidate_ids" in item
+            else item.get("candidates", item.get("bands", item.get("candidate_id")))
+        )
+        candidate_ids = _candidate_ids_from_value(ids_value)
+        selected = [candidate_by_id[cid] for cid in candidate_ids if cid in candidate_by_id]
+        out.append(QuestionRegion(qid=qid, regions=_regions_from_candidate_bands(selected, pp_cfg)))
+    return SegmentationResult(questions=out)
 
 
 def _snap_bbox_to_ink_bands(
@@ -477,6 +705,153 @@ def build_segmentation_graph(cfg: AppConfig) -> StateGraph:
     return graph
 
 
+def _run_page_by_page_segmentation(
+    app: Any,
+    *,
+    pdf_path: str,
+    q_dicts: list[dict],
+    page_paths: list[str],
+    page_dims: list[tuple[int, int]],
+    max_retry: int,
+    expected_qids: list[str],
+) -> SegmentationResult | None:
+    page_results: list[SegmentationResult] = []
+    page_errors: list[str] = []
+    for page_idx, (page_path, page_dim) in enumerate(zip(page_paths, page_dims)):
+        page_no = page_idx + 1
+        init_state: SegState = {
+            "pdf_path": pdf_path,
+            "page_image_paths": [page_path],
+            "page_dimensions": [page_dim],
+            "page_numbers": [page_no],
+            "questions": q_dicts,
+            "result": None,
+            "retry_count": 0,
+            "max_retry": max_retry,
+            "error": "",
+        }
+        final = app.invoke(init_state)
+        if final["result"] is None:
+            err = f"page {page_no}: {final.get('error', 'unknown')}"
+            page_errors.append(err)
+            logger.warning("Segmentation failed for %s %s", pdf_path, err)
+            continue
+        page_results.append(SegmentationResult(**final["result"]))
+
+    if not page_results:
+        logger.error(
+            "Page-by-page segmentation failed for %s after %d pages: %s",
+            pdf_path,
+            len(page_paths),
+            "; ".join(page_errors) or "unknown",
+        )
+        return None
+    return _merge_segmentation_results(page_results, expected_qids)
+
+
+def _run_band_assignment_segmentation(
+    cfg: AppConfig,
+    q_dicts: list[dict],
+    pdf_path: str,
+    page_paths: list[str],
+    page_dims: list[tuple[int, int]],
+    expected_qids: list[str],
+) -> SegmentationResult | None:
+    """Ask the model to map deterministic candidate bands to qids."""
+    llm_cfg = cfg.assignment_segmentation.llm
+    pp_cfg = cfg.assignment_segmentation.postprocess
+    prompt_dir = Path(llm_cfg.prompt_template).parent
+    band_tpl_path = prompt_dir / "segmentation_band_assign.jinja"
+    if not band_tpl_path.exists():
+        logger.warning("Band assignment prompt not found: %s", band_tpl_path)
+        return None
+    band_tpl = Template(band_tpl_path.read_text(encoding="utf-8"))
+    llm = build_llm(llm_cfg)
+
+    canonical = student_canonical_stem(pdf_path)
+    candidate_dir = get_answers_dir() / canonical / "_pages" / "candidates"
+    page_results: list[SegmentationResult] = []
+    page_errors: list[str] = []
+
+    for page_idx, (page_path, page_dim) in enumerate(zip(page_paths, page_dims)):
+        page_no = page_idx + 1
+        with Image.open(page_path) as raw_img:
+            page_img = raw_img.convert("RGB")
+        try:
+            candidates = _build_candidate_bands(page_img, page_no=page_no, pp_cfg=pp_cfg)
+            if not candidates:
+                page_results.append(SegmentationResult(questions=[]))
+                continue
+            overlay_path = candidate_dir / f"page_{page_no}_candidates.png"
+            _save_candidate_overlay(page_img, candidates, overlay_path)
+        finally:
+            page_img.close()
+
+        intro_text = (
+            f"本次作业共有 {len(q_dicts)} 道题。以下每题先给出文字说明，"
+            "再给出该题的题干图（若有）。"
+        )
+        segments: list[tuple[str, list[str]]] = [(intro_text, [])]
+        for q in q_dicts:
+            q_text = _format_question_block(q)
+            q_images = [
+                str(resolve_assignment_path(p)) for p in (q.get("question_images") or [])
+                if p and resolve_assignment_path(p).exists()
+            ]
+            segments.append((q_text, q_images))
+
+        candidate_text = band_tpl.render(
+            page_no=page_no,
+            width=page_dim[0],
+            height=page_dim[1],
+            candidates=candidates,
+            expected_qids=expected_qids,
+        )
+        segments.append((candidate_text, [str(overlay_path)]))
+        msg = build_vision_message_segmented(segments)
+
+        parsed_result: SegmentationResult | None = None
+        last_error = ""
+        for attempt in range(max(1, cfg.assignment_segmentation.max_retry)):
+            try:
+                ctx = {
+                    "stage": "segmentation-band-assign",
+                    "pdf": Path(pdf_path).stem,
+                    "page": page_no,
+                    "attempt": attempt + 1,
+                }
+                resp = invoke_with_log(llm, [msg], ctx)
+                raw = extract_json(resp.content)
+                if raw is None:
+                    last_error = "JSON parse failed"
+                    continue
+                parsed_result = _candidate_assignment_to_segmentation_result(raw, candidates, pp_cfg)
+                break
+            except Exception as e:
+                last_error = str(e)
+                logger.exception("Band assignment LLM call failed for %s page %s", pdf_path, page_no)
+        if parsed_result is None:
+            page_errors.append(f"page {page_no}: {last_error or 'unknown'}")
+            continue
+        page_results.append(parsed_result)
+
+    if not page_results:
+        logger.warning(
+            "Band assignment segmentation failed for %s after %d pages: %s",
+            pdf_path,
+            len(page_paths),
+            "; ".join(page_errors) or "unknown",
+        )
+        return None
+    if page_errors:
+        logger.warning(
+            "Band assignment segmentation skipped failed pages for %s: %s",
+            pdf_path,
+            "; ".join(page_errors),
+        )
+    return _merge_segmentation_results(page_results, expected_qids)
+
+
 def _process_one_pdf_sync(
     cfg: AppConfig,
     q_dicts: list[dict],
@@ -488,48 +863,52 @@ def _process_one_pdf_sync(
     使用规范 stem（学号_姓名）作为 answers 目录名，便于同一学生更新作业时覆盖。
     """
     canonical = student_canonical_stem(pdf_path)
-    graph = build_segmentation_graph(cfg)
-    app = graph.compile()
     max_retry = cfg.assignment_segmentation.max_retry
 
     page_paths, page_dims = _render_and_cache_pages(pdf_path)
     expected_qids = [q.get("qid", "") for q in q_dicts if q.get("qid")]
     strategy = getattr(cfg.assignment_segmentation, "strategy", "global")
+    seg_result: SegmentationResult | None = None
 
     if strategy == "page_by_page":
-        page_results: list[SegmentationResult] = []
-        page_errors: list[str] = []
-        for page_idx, (page_path, page_dim) in enumerate(zip(page_paths, page_dims)):
-            page_no = page_idx + 1
-            init_state: SegState = {
-                "pdf_path": pdf_path,
-                "page_image_paths": [page_path],
-                "page_dimensions": [page_dim],
-                "page_numbers": [page_no],
-                "questions": q_dicts,
-                "result": None,
-                "retry_count": 0,
-                "max_retry": max_retry,
-                "error": "",
-            }
-            final = app.invoke(init_state)
-            if final["result"] is None:
-                err = f"page {page_no}: {final.get('error', 'unknown')}"
-                page_errors.append(err)
-                logger.warning("Segmentation failed for %s %s", pdf_path, err)
-                continue
-            page_results.append(SegmentationResult(**final["result"]))
-
-        if not page_results:
-            logger.error(
-                "Page-by-page segmentation failed for %s after %d pages: %s",
-                pdf_path,
-                len(page_paths),
-                "; ".join(page_errors) or "unknown",
-            )
+        graph = build_segmentation_graph(cfg)
+        seg_result = _run_page_by_page_segmentation(
+            graph.compile(),
+            pdf_path=pdf_path,
+            q_dicts=q_dicts,
+            page_paths=page_paths,
+            page_dims=page_dims,
+            max_retry=max_retry,
+            expected_qids=expected_qids,
+        )
+        if seg_result is None:
             return (canonical, None)
-        seg_result = _merge_segmentation_results(page_results, expected_qids)
+    elif strategy == "band_assign":
+        seg_result = _run_band_assignment_segmentation(
+            cfg,
+            q_dicts,
+            pdf_path,
+            page_paths,
+            page_dims,
+            expected_qids,
+        )
+        if seg_result is None:
+            logger.warning("Falling back to page-by-page bbox segmentation for %s", pdf_path)
+            graph = build_segmentation_graph(cfg)
+            seg_result = _run_page_by_page_segmentation(
+                graph.compile(),
+                pdf_path=pdf_path,
+                q_dicts=q_dicts,
+                page_paths=page_paths,
+                page_dims=page_dims,
+                max_retry=max_retry,
+                expected_qids=expected_qids,
+            )
+            if seg_result is None:
+                return (canonical, None)
     else:
+        graph = build_segmentation_graph(cfg)
+        app = graph.compile()
         init_state: SegState = {
             "pdf_path": pdf_path,
             "page_image_paths": page_paths,
@@ -553,6 +932,9 @@ def _process_one_pdf_sync(
             return (canonical, None)
         seg_result = SegmentationResult(**final["result"])
 
+    if seg_result is None:
+        return (canonical, None)
+
     seg_result = _postprocess_segmentation_result(
         seg_result,
         page_dims,
@@ -565,6 +947,7 @@ def _process_one_pdf_sync(
     segments_path = cache_dir / "segments.json"
     segments_data = {
         "dimensions": page_dims,
+        "strategy": strategy,
         "postprocess": cfg.assignment_segmentation.postprocess.model_dump(),
         "questions": [
             {"qid": qr.qid, "regions": [{"page": r.page, "bbox": r.bbox} for r in qr.regions]}

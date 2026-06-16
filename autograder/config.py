@@ -53,11 +53,13 @@ class SegmentationPostprocessConfig(BaseModel):
     band_gap_tolerance: int = Field(default=6, ge=0, le=256)
     band_bridge_gap: int = Field(default=80, ge=0, le=1024)
     band_padding: int = Field(default=18, ge=0, le=512)
+    candidate_bridge_gap: int = Field(default=36, ge=0, le=512)
+    candidate_max_bands: int = Field(default=96, ge=8, le=512)
     min_box_height: int = Field(default=48, ge=1, le=1024)
 
 
 class SegmentationConfig(BaseModel):
-    strategy: Literal["global", "page_by_page"] = "global"
+    strategy: Literal["global", "page_by_page", "band_assign"] = "global"
     num_workers: int = 5
     max_retry: int = 3
     llm: LLMConfig = Field(default_factory=LLMConfig)
