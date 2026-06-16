@@ -10,10 +10,11 @@ from typing import Any, TypedDict
 
 from jinja2 import Template
 from langgraph.graph import END, StateGraph
+from PIL import Image
 
-from autograder.config import AppConfig, get_answers_dir, resolve_assignment_path
+from autograder.config import AppConfig, SegmentationPostprocessConfig, get_answers_dir, resolve_assignment_path
 from autograder.llm import build_llm, build_vision_message_segmented, extract_json, invoke_with_log
-from autograder.models import QuestionConfig, SegmentationResult
+from autograder.models import BBox, QuestionConfig, QuestionRegion, SegmentationResult
 from autograder.pdf_utils import render_pdf_pages, save_answer_images, student_canonical_stem
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,181 @@ def _render_and_cache_pages(pdf_path: str) -> tuple[list[str], list[tuple[int, i
         paths.append(str(p))
         dims.append((w, h))
     return paths, dims
+
+
+def _clamp_bbox(bbox: list[int] | tuple[int, int, int, int], width: int, height: int) -> list[int] | None:
+    """Clamp and normalize a bbox in page-image coordinates."""
+    if len(bbox) != 4:
+        return None
+    x1, y1, x2, y2 = [int(round(v)) for v in bbox]
+    left = max(0, min(x1, x2, width))
+    right = max(0, min(max(x1, x2), width))
+    top = max(0, min(y1, y2, height))
+    bottom = max(0, min(max(y1, y2), height))
+    if right <= left or bottom <= top:
+        return None
+    return [left, top, right, bottom]
+
+
+def _expand_bbox(bbox: list[int], width: int, height: int, x_margin: int, y_margin: int) -> list[int] | None:
+    return _clamp_bbox(
+        [
+            bbox[0] - x_margin,
+            bbox[1] - y_margin,
+            bbox[2] + x_margin,
+            bbox[3] + y_margin,
+        ],
+        width,
+        height,
+    )
+
+
+def _ensure_min_height(bbox: list[int], width: int, height: int, min_height: int) -> list[int]:
+    if bbox[3] - bbox[1] >= min_height:
+        return bbox
+    center = (bbox[1] + bbox[3]) // 2
+    half = max(1, min_height // 2)
+    expanded = _clamp_bbox([bbox[0], center - half, bbox[2], center + half], width, height)
+    return expanded or bbox
+
+
+def _ink_bbox_in_region(
+    page_img: Image.Image,
+    search_bbox: list[int],
+    *,
+    threshold: int,
+    min_ink_pixels: int,
+) -> list[int] | None:
+    """Return the dark-pixel bbox inside search_bbox, in page coordinates."""
+    crop = page_img.crop(tuple(search_bbox)).convert("L")
+    # Threshold to a white-on-black mask in L mode so getbbox and histogram are cheap.
+    mask = crop.point(lambda p: 255 if p < threshold else 0, "L")
+    hist = mask.histogram()
+    ink_pixels = hist[255] if len(hist) > 255 else 0
+    if ink_pixels < min_ink_pixels:
+        return None
+    local = mask.getbbox()
+    if local is None:
+        return None
+    return [
+        search_bbox[0] + local[0],
+        search_bbox[1] + local[1],
+        search_bbox[0] + local[2],
+        search_bbox[1] + local[3],
+    ]
+
+
+def _repair_region_bbox(
+    bbox: list[int],
+    page_img: Image.Image,
+    page_dim: tuple[int, int],
+    pp_cfg: SegmentationPostprocessConfig,
+) -> list[int] | None:
+    """Make a coarse LLM bbox safer for answer cropping."""
+    width, height = page_dim
+    fixed = _clamp_bbox(bbox, width, height)
+    if fixed is None:
+        return None
+
+    fixed = _ensure_min_height(fixed, width, height, pp_cfg.min_box_height)
+
+    if pp_cfg.snap_to_content:
+        search = _expand_bbox(
+            fixed,
+            width,
+            height,
+            pp_cfg.snap_padding,
+            pp_cfg.snap_padding,
+        )
+        if search:
+            ink = _ink_bbox_in_region(
+                page_img,
+                search,
+                threshold=pp_cfg.ink_threshold,
+                min_ink_pixels=pp_cfg.min_ink_pixels,
+            )
+            if ink:
+                fixed = [
+                    min(fixed[0], ink[0]),
+                    min(fixed[1], ink[1]),
+                    max(fixed[2], ink[2]),
+                    max(fixed[3], ink[3]),
+                ]
+
+    if pp_cfg.full_width:
+        fixed[0] = pp_cfg.horizontal_margin
+        fixed[2] = max(pp_cfg.horizontal_margin + 1, width - pp_cfg.horizontal_margin)
+        x_margin = 0
+    else:
+        x_margin = pp_cfg.horizontal_margin
+
+    fixed = _expand_bbox(
+        fixed,
+        width,
+        height,
+        x_margin,
+        pp_cfg.vertical_margin,
+    )
+    if fixed is None:
+        return None
+    return _ensure_min_height(fixed, width, height, pp_cfg.min_box_height)
+
+
+def _postprocess_segmentation_result(
+    seg_result: SegmentationResult,
+    page_dims: list[tuple[int, int]],
+    page_image_paths: list[str],
+    pp_cfg: SegmentationPostprocessConfig,
+    expected_qids: list[str],
+) -> SegmentationResult:
+    """Repair LLM regions and preserve all expected qids for the manual editor."""
+    if not pp_cfg.enabled:
+        seen = {q.qid for q in seg_result.questions}
+        missing = [
+            QuestionRegion(qid=qid, regions=[])
+            for qid in expected_qids
+            if qid not in seen
+        ]
+        return SegmentationResult(questions=list(seg_result.questions) + missing)
+
+    page_images: list[Image.Image] = []
+    try:
+        page_images = [Image.open(path).convert("RGB") for path in page_image_paths]
+        by_qid: dict[str, list[BBox]] = {qid: [] for qid in expected_qids}
+        extras: dict[str, list[BBox]] = {}
+
+        for qr in seg_result.questions:
+            target = by_qid.setdefault(qr.qid, []) if qr.qid in by_qid else extras.setdefault(qr.qid, [])
+            for region in qr.regions:
+                page_idx = region.page - 1
+                if page_idx < 0 or page_idx >= len(page_dims) or page_idx >= len(page_images):
+                    continue
+                repaired = _repair_region_bbox(
+                    region.bbox,
+                    page_images[page_idx],
+                    page_dims[page_idx],
+                    pp_cfg,
+                )
+                if repaired is None:
+                    continue
+                target.append(BBox(page=region.page, bbox=repaired))
+
+        out: list[QuestionRegion] = []
+        for qid in expected_qids:
+            regions = sorted(by_qid.get(qid, []), key=lambda r: (r.page, r.bbox[1], r.bbox[0]))
+            out.append(QuestionRegion(qid=qid, regions=regions))
+        for qid, regions in extras.items():
+            out.append(QuestionRegion(
+                qid=qid,
+                regions=sorted(regions, key=lambda r: (r.page, r.bbox[1], r.bbox[0])),
+            ))
+        return SegmentationResult(questions=out)
+    finally:
+        for img in page_images:
+            try:
+                img.close()
+            except Exception:
+                pass
 
 
 def _format_question_block(q: dict) -> str:
@@ -192,12 +368,21 @@ def _process_one_pdf_sync(
         )
         return (canonical, None)
 
+    expected_qids = [q.get("qid", "") for q in q_dicts if q.get("qid")]
     seg_result = SegmentationResult(**final["result"])
+    seg_result = _postprocess_segmentation_result(
+        seg_result,
+        page_dims,
+        page_paths,
+        cfg.assignment_segmentation.postprocess,
+        expected_qids,
+    )
     # 持久化 for_llm 坐标系下的 segment，供人工重新切分界面加载与保存
     cache_dir = get_answers_dir() / canonical / "_pages"
     segments_path = cache_dir / "segments.json"
     segments_data = {
         "dimensions": page_dims,
+        "postprocess": cfg.assignment_segmentation.postprocess.model_dump(),
         "questions": [
             {"qid": qr.qid, "regions": [{"page": r.page, "bbox": r.bbox} for r in qr.regions]}
             for qr in seg_result.questions

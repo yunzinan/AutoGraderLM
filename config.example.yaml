@@ -16,6 +16,11 @@ assignment_configuration:
 assignment_segmentation:
   num_workers: 5
   max_retry: 3
+  postprocess:
+    enabled: true
+    full_width: true
+    vertical_margin: 28
+    snap_to_content: true
   llm:
     model: "your-vision-model"
     endpoint: "/v1/chat/completions"

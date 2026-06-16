@@ -38,10 +38,24 @@ class AssignmentConfigSection(BaseModel):
     excel_in_path: str = ""
 
 
+class SegmentationPostprocessConfig(BaseModel):
+    """Deterministic cleanup for LLM-produced answer regions."""
+    enabled: bool = True
+    full_width: bool = True
+    horizontal_margin: int = Field(default=8, ge=0, le=256)
+    vertical_margin: int = Field(default=28, ge=0, le=512)
+    snap_to_content: bool = True
+    snap_padding: int = Field(default=72, ge=0, le=512)
+    ink_threshold: int = Field(default=245, ge=0, le=255)
+    min_ink_pixels: int = Field(default=32, ge=0, le=100000)
+    min_box_height: int = Field(default=48, ge=1, le=1024)
+
+
 class SegmentationConfig(BaseModel):
     num_workers: int = 5
     max_retry: int = 3
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    postprocess: SegmentationPostprocessConfig = Field(default_factory=SegmentationPostprocessConfig)
 
 
 class GradingConfig(BaseModel):
