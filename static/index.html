@@ -2109,6 +2109,31 @@ createApp({
       return out;
     }
 
+    function sanitizeHtml(html) {
+      const template = document.createElement('template');
+      template.innerHTML = String(html || '');
+      const blockedTags = new Set(['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base']);
+      template.content.querySelectorAll('*').forEach((el) => {
+        const tag = String(el.tagName || '').toLowerCase();
+        if (blockedTags.has(tag)) {
+          el.remove();
+          return;
+        }
+        Array.from(el.attributes).forEach((attr) => {
+          const name = attr.name.toLowerCase();
+          const value = String(attr.value || '').trim().toLowerCase();
+          if (name.startsWith('on')) {
+            el.removeAttribute(attr.name);
+            return;
+          }
+          if ((name === 'href' || name === 'src' || name === 'xlink:href') && value.startsWith('javascript:')) {
+            el.removeAttribute(attr.name);
+          }
+        });
+      });
+      return template.innerHTML;
+    }
+
     function renderMd(text) {
       if (typeof marked === 'undefined') return (text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
       try {
@@ -2128,7 +2153,7 @@ createApp({
           const replacement = renderKatexFragment(b.content, !!b.display);
           html = html.split(ph).join(replacement);
         });
-        return html;
+        return sanitizeHtml(html);
       } catch {
         return (text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
       }

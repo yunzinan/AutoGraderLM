@@ -62,7 +62,7 @@ def create_app() -> FastAPI:
         })
 
     base = get_assignment_path()
-    for dir_name in ("questions", "answers", "results"):
+    for dir_name in ("questions", "answers"):
         d = base / dir_name
         d.mkdir(parents=True, exist_ok=True)
         app.mount(f"/files/{dir_name}", StaticFiles(directory=str(d)), name=f"files_{dir_name}")
