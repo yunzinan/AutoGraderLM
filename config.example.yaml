@@ -14,10 +14,9 @@ assignment_configuration:
   excel_in_path: "in.xls"
 
 assignment_segmentation:
-  # Experimental branch option: band_assign detects local answer-band candidates,
-  # then asks the model to assign candidate IDs to question IDs instead of
-  # inventing exact bbox coordinates. Other options: global, page_by_page.
-  strategy: "band_assign"
+  # Recommended robust mode: process each page independently with one crop per
+  # question per page. Other options: global, band_assign.
+  strategy: "page_by_page"
   num_workers: 5
   max_retry: 3
   band_assign_fill_missing_with_page_by_page: true

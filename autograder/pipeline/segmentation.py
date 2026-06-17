@@ -410,7 +410,7 @@ def _candidate_ids_from_value(value: Any) -> list[str]:
 
 def _regions_from_candidate_bands(
     selected: list[CandidateBand],
-    pp_cfg: SegmentationPostprocessConfig,
+    _pp_cfg: SegmentationPostprocessConfig,
 ) -> list[BBox]:
     if not selected:
         return []
@@ -422,37 +422,17 @@ def _regions_from_candidate_bands(
             continue
         seen.add(key)
         unique.append(candidate)
-    ordered = sorted(
-        unique,
-        key=lambda c: (c["page"], c["bbox"][1], c["bbox"][0]),
-    )
     regions: list[BBox] = []
-    group: list[CandidateBand] = []
+    by_page: dict[int, list[CandidateBand]] = {}
+    for candidate in unique:
+        by_page.setdefault(candidate["page"], []).append(candidate)
 
-    def flush_group() -> None:
-        if not group:
-            return
-        page = group[0]["page"]
-        left = min(c["bbox"][0] for c in group)
-        top = min(c["bbox"][1] for c in group)
-        right = max(c["bbox"][2] for c in group)
-        bottom = max(c["bbox"][3] for c in group)
+    for page, candidates in sorted(by_page.items()):
+        left = min(c["bbox"][0] for c in candidates)
+        top = min(c["bbox"][1] for c in candidates)
+        right = max(c["bbox"][2] for c in candidates)
+        bottom = max(c["bbox"][3] for c in candidates)
         regions.append(BBox(page=page, bbox=[left, top, right, bottom]))
-
-    for candidate in ordered:
-        if not group:
-            group = [candidate]
-            continue
-        prev = group[-1]
-        same_page = candidate["page"] == prev["page"]
-        gap = candidate["bbox"][1] - prev["bbox"][3]
-        if same_page and gap <= pp_cfg.candidate_region_merge_gap:
-            group.append(candidate)
-            continue
-        flush_group()
-        group = [candidate]
-
-    flush_group()
     return regions
 
 
