@@ -1,7 +1,7 @@
 ## Candidate-Band Assignment Task
 
 You are not asked to draw bounding boxes. The answer page image below already has
-detected candidate answer bands labeled `B1`, `B2`, ...
+detected fine-grained candidate answer bands labeled `B1`, `B2`, ...
 
 Page {{ page_no }} image size: width={{ width }}, height={{ height }}.
 
@@ -24,7 +24,12 @@ Rules:
 4. If a question has no visible answer on this page, use an empty list.
 5. If the same student's answer continues across neighboring candidate bands,
    include all of those bands.
-6. Do not include unrelated bands, page headers, marks, or another question's work.
+6. Never assign the same candidate band ID to more than one question. If one
+   candidate visibly spans multiple questions, choose the question that owns
+   most of that band and leave the rest to other candidate bands.
+7. Some candidate bands may contain only paper ruling, page borders, or blank
+   space. Do not select those bands.
+8. Do not include unrelated bands, page headers, marks, or another question's work.
 
 Output schema:
 {

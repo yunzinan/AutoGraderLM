@@ -98,6 +98,26 @@ def _clamp_bbox(bbox: list[int] | tuple[int, int, int, int], width: int, height:
     return [left, top, right, bottom]
 
 
+def _bbox_area(bbox: list[int] | tuple[int, int, int, int]) -> int:
+    return max(0, int(bbox[2]) - int(bbox[0])) * max(0, int(bbox[3]) - int(bbox[1]))
+
+
+def _bbox_overlap_ratio(
+    a: list[int] | tuple[int, int, int, int],
+    b: list[int] | tuple[int, int, int, int],
+) -> float:
+    """Intersection over the smaller box area, useful for duplicate crop detection."""
+    left = max(int(a[0]), int(b[0]))
+    top = max(int(a[1]), int(b[1]))
+    right = min(int(a[2]), int(b[2]))
+    bottom = min(int(a[3]), int(b[3]))
+    inter = _bbox_area([left, top, right, bottom])
+    if inter <= 0:
+        return 0.0
+    denom = min(_bbox_area(a), _bbox_area(b))
+    return inter / denom if denom > 0 else 0.0
+
+
 def _expand_bbox(bbox: list[int], width: int, height: int, x_margin: int, y_margin: int) -> list[int] | None:
     return _clamp_bbox(
         [
@@ -221,6 +241,70 @@ def _limit_band_ranges(
     return ranges
 
 
+def _split_ranges_at_horizontal_rules(
+    page_img: Image.Image,
+    ranges: list[tuple[int, int]],
+    pp_cfg: SegmentationPostprocessConfig,
+) -> list[tuple[int, int]]:
+    """Split tall candidates at strong separator lines drawn between answers."""
+    if not ranges or pp_cfg.candidate_split_min_height <= 0:
+        return ranges
+
+    width, height = page_img.size
+    min_ink = int(width * pp_cfg.candidate_rule_min_width_ratio)
+    if min_ink <= 0:
+        return ranges
+
+    gray = page_img.convert("L")
+    threshold = min(pp_cfg.ink_threshold, pp_cfg.candidate_rule_threshold)
+    mask = gray.point(lambda p: 255 if p < threshold else 0, "L")
+    mask_bytes = mask.tobytes()
+    rule_groups: list[tuple[int, int]] = []
+    active_start: int | None = None
+    last_active_y: int | None = None
+
+    for y in range(height):
+        row_start = y * width
+        ink = mask_bytes[row_start:row_start + width].count(255)
+        if ink >= min_ink:
+            if active_start is None:
+                active_start = y
+            last_active_y = y
+            continue
+        if active_start is not None and last_active_y is not None and y - last_active_y > 2:
+            rule_groups.append((active_start, last_active_y + 1))
+            active_start = None
+            last_active_y = None
+
+    if active_start is not None and last_active_y is not None:
+        rule_groups.append((active_start, last_active_y + 1))
+
+    if not rule_groups:
+        return ranges
+
+    out: list[tuple[int, int]] = []
+    min_piece = pp_cfg.candidate_split_min_piece_height
+    for top, bottom in ranges:
+        if bottom - top < pp_cfg.candidate_split_min_height:
+            out.append((top, bottom))
+            continue
+        cur_top = top
+        split = False
+        for rule_top, rule_bottom in rule_groups:
+            if rule_bottom <= cur_top or rule_top >= bottom:
+                continue
+            if rule_top - cur_top < min_piece or bottom - rule_bottom < min_piece:
+                continue
+            out.append((cur_top, rule_top))
+            cur_top = rule_bottom
+            split = True
+        if cur_top < bottom:
+            out.append((cur_top, bottom))
+        elif not split:
+            out.append((top, bottom))
+    return out
+
+
 def _build_candidate_bands(
     page_img: Image.Image,
     *,
@@ -232,10 +316,11 @@ def _build_candidate_bands(
     ink_bands = _detect_ink_bands(
         page_img,
         threshold=pp_cfg.ink_threshold,
-        min_ink_per_row=pp_cfg.band_min_ink_per_row,
+        min_ink_per_row=pp_cfg.candidate_min_ink_per_row,
         gap_tolerance=pp_cfg.band_gap_tolerance,
     )
     ranges = _merge_band_ranges(ink_bands, pp_cfg.candidate_bridge_gap)
+    ranges = _split_ranges_at_horizontal_rules(page_img, ranges, pp_cfg)
     ranges = _limit_band_ranges(ranges, pp_cfg.candidate_max_bands)
 
     candidates: list[CandidateBand] = []
@@ -361,7 +446,7 @@ def _regions_from_candidate_bands(
         prev = group[-1]
         same_page = candidate["page"] == prev["page"]
         gap = candidate["bbox"][1] - prev["bbox"][3]
-        if same_page and gap <= pp_cfg.band_bridge_gap:
+        if same_page and gap <= pp_cfg.candidate_region_merge_gap:
             group.append(candidate)
             continue
         flush_group()
@@ -384,7 +469,8 @@ def _candidate_assignment_to_segmentation_result(
     if not isinstance(entries, list):
         entries = []
 
-    out: list[QuestionRegion] = []
+    parsed_entries: list[tuple[str, list[str]]] = []
+    claimed_by: dict[str, set[str]] = {}
     for item in entries:
         if not isinstance(item, dict):
             continue
@@ -397,9 +483,37 @@ def _candidate_assignment_to_segmentation_result(
             else item.get("candidates", item.get("bands", item.get("candidate_id")))
         )
         candidate_ids = _candidate_ids_from_value(ids_value)
+        parsed_entries.append((qid, candidate_ids))
+        for cid in candidate_ids:
+            if cid in candidate_by_id:
+                claimed_by.setdefault(cid, set()).add(qid)
+
+    conflicting_ids = {cid for cid, qids in claimed_by.items() if len(qids) > 1}
+    if conflicting_ids:
+        logger.warning(
+            "Ignoring candidate ids assigned to multiple qids: %s",
+            ", ".join(sorted(conflicting_ids)),
+        )
+
+    out: list[QuestionRegion] = []
+    for qid, candidate_ids in parsed_entries:
         selected = [candidate_by_id[cid] for cid in candidate_ids if cid in candidate_by_id]
+        if conflicting_ids:
+            selected = [candidate for candidate in selected if candidate["id"] not in conflicting_ids]
         out.append(QuestionRegion(qid=qid, regions=_regions_from_candidate_bands(selected, pp_cfg)))
     return SegmentationResult(questions=out)
+
+
+def _candidate_postprocess_config(
+    pp_cfg: SegmentationPostprocessConfig,
+) -> SegmentationPostprocessConfig:
+    """Use conservative expansion for already-deterministic candidate boxes."""
+    return pp_cfg.model_copy(update={
+        "band_bridge_gap": min(pp_cfg.band_bridge_gap, pp_cfg.candidate_region_merge_gap),
+        "snap_padding": min(pp_cfg.snap_padding, pp_cfg.candidate_snap_padding),
+        "snap_to_ink_bands": False,
+        "vertical_margin": min(pp_cfg.vertical_margin, pp_cfg.candidate_vertical_margin),
+    })
 
 
 def _snap_bbox_to_ink_bands(
@@ -561,14 +675,25 @@ def _postprocess_segmentation_result(
                     continue
                 target.append(BBox(page=region.page, bbox=repaired))
 
+        merged_by_qid: dict[str, list[BBox]] = {}
+        for qid in expected_qids:
+            merged_by_qid[qid] = _merge_same_page_regions(
+                sorted(by_qid.get(qid, []), key=lambda r: (r.page, r.bbox[1], r.bbox[0])),
+                gap=pp_cfg.vertical_margin,
+            )
+        merged_by_qid = _drop_contained_cross_qid_regions(merged_by_qid, expected_qids)
+
         out: list[QuestionRegion] = []
         for qid in expected_qids:
-            regions = sorted(by_qid.get(qid, []), key=lambda r: (r.page, r.bbox[1], r.bbox[0]))
+            regions = merged_by_qid.get(qid, [])
             out.append(QuestionRegion(qid=qid, regions=regions))
         for qid, regions in extras.items():
             out.append(QuestionRegion(
                 qid=qid,
-                regions=sorted(regions, key=lambda r: (r.page, r.bbox[1], r.bbox[0])),
+                regions=_merge_same_page_regions(
+                    sorted(regions, key=lambda r: (r.page, r.bbox[1], r.bbox[0])),
+                    gap=pp_cfg.vertical_margin,
+                ),
             ))
         return SegmentationResult(questions=out)
     finally:
@@ -617,6 +742,65 @@ def _merge_segmentation_results(
     return SegmentationResult(questions=out)
 
 
+def _merge_same_page_regions(regions: list[BBox], *, gap: int) -> list[BBox]:
+    if not regions:
+        return []
+    ordered = sorted(regions, key=lambda r: (r.page, r.bbox[1], r.bbox[0]))
+    merged: list[BBox] = []
+    cur = BBox(page=ordered[0].page, bbox=list(ordered[0].bbox))
+    for region in ordered[1:]:
+        same_page = region.page == cur.page
+        close_vertical = region.bbox[1] <= cur.bbox[3] + gap
+        if same_page and close_vertical:
+            cur.bbox = [
+                min(cur.bbox[0], region.bbox[0]),
+                min(cur.bbox[1], region.bbox[1]),
+                max(cur.bbox[2], region.bbox[2]),
+                max(cur.bbox[3], region.bbox[3]),
+            ]
+            continue
+        merged.append(cur)
+        cur = BBox(page=region.page, bbox=list(region.bbox))
+    merged.append(cur)
+    return merged
+
+
+def _drop_contained_cross_qid_regions(
+    by_qid: dict[str, list[BBox]],
+    expected_qids: list[str],
+) -> dict[str, list[BBox]]:
+    """Remove obvious stray fragments swallowed by another question's larger crop."""
+    expected_set = set(expected_qids)
+    out = {qid: list(regions) for qid, regions in by_qid.items()}
+    flat = [
+        (qid, region)
+        for qid, regions in out.items()
+        if qid in expected_set
+        for region in regions
+    ]
+    to_drop: set[tuple[str, int]] = set()
+    for qid, regions in out.items():
+        if qid not in expected_set or len(regions) <= 1:
+            continue
+        for idx, region in enumerate(regions):
+            region_area = _bbox_area(region.bbox)
+            if region_area <= 0:
+                continue
+            for other_qid, other in flat:
+                if other_qid == qid or other.page != region.page:
+                    continue
+                other_area = _bbox_area(other.bbox)
+                if other_area <= 0 or region_area > other_area * 0.75:
+                    continue
+                if _bbox_overlap_ratio(region.bbox, other.bbox) >= 0.95:
+                    to_drop.add((qid, idx))
+                    break
+
+    for qid, idx in sorted(to_drop, key=lambda item: item[1], reverse=True):
+        del out[qid][idx]
+    return out
+
+
 def _qid_regions_map(seg_result: SegmentationResult) -> dict[str, list[BBox]]:
     by_qid: dict[str, list[BBox]] = {}
     for qr in seg_result.questions:
@@ -633,13 +817,39 @@ def _segmentation_diagnostics(
     nonempty_qids = [qid for qid in expected_qids if by_qid.get(qid)]
     total_regions = sum(len(by_qid.get(qid, [])) for qid in expected_qids)
     assigned_ratio = len(nonempty_qids) / len(expected_qids) if expected_qids else 1.0
+    expected_set = set(expected_qids)
+    overlap_pairs: list[dict[str, Any]] = []
+    q_regions = [
+        (qid, region)
+        for qid, regions in by_qid.items()
+        if qid in expected_set
+        for region in regions
+    ]
+    for idx, (qid_a, region_a) in enumerate(q_regions):
+        for qid_b, region_b in q_regions[idx + 1:]:
+            if qid_a == qid_b or region_a.page != region_b.page:
+                continue
+            ratio = _bbox_overlap_ratio(region_a.bbox, region_b.bbox)
+            if ratio >= 0.85:
+                overlap_pairs.append({
+                    "qid_a": qid_a,
+                    "qid_b": qid_b,
+                    "page": region_a.page,
+                    "overlap_ratio": round(ratio, 4),
+                })
     return {
         "expected_qids": len(expected_qids),
         "nonempty_qids": len(nonempty_qids),
         "missing_qids": missing_qids,
         "assigned_ratio": assigned_ratio,
         "total_regions": total_regions,
+        "overlap_pairs": overlap_pairs,
     }
+
+
+def _has_high_overlap(diag: dict[str, Any]) -> bool:
+    pairs = diag.get("overlap_pairs")
+    return isinstance(pairs, list) and bool(pairs)
 
 
 def _fill_missing_qids_from_fallback(
@@ -977,13 +1187,16 @@ def _process_one_pdf_sync(
             seg_result = band_result
             should_try_fallback = (
                 cfg.assignment_segmentation.band_assign_fill_missing_with_page_by_page
-                and bool(band_diag["missing_qids"])
+                and (bool(band_diag["missing_qids"]) or _has_high_overlap(band_diag))
             )
             if should_try_fallback:
+                fallback_reason = "high-overlap" if _has_high_overlap(band_diag) else "missing-qids"
                 logger.info(
-                    "Band assignment left missing qids for %s: %s; trying page-by-page fallback",
+                    "Band assignment needs fallback for %s (%s): missing=%s overlap=%s",
                     pdf_path,
+                    fallback_reason,
                     ", ".join(band_diag["missing_qids"]),
+                    band_diag.get("overlap_pairs", []),
                 )
                 graph = build_segmentation_graph(cfg)
                 segmentation_meta["fallback_attempted"] = True
@@ -1001,6 +1214,14 @@ def _process_one_pdf_sync(
                     segmentation_meta["page_by_page_fallback"] = fallback_diag
                     min_ratio = cfg.assignment_segmentation.band_assign_min_assigned_ratio
                     if (
+                        _has_high_overlap(band_diag)
+                        and not _has_high_overlap(fallback_diag)
+                        and fallback_diag["assigned_ratio"] >= band_diag["assigned_ratio"]
+                    ):
+                        seg_result = fallback_result
+                        segmentation_meta["fallback_used"] = True
+                        segmentation_meta["fallback_mode"] = "replace_overlapping_band_assign"
+                    elif (
                         band_diag["assigned_ratio"] < min_ratio
                         and fallback_diag["assigned_ratio"] > band_diag["assigned_ratio"]
                     ):
@@ -1014,7 +1235,19 @@ def _process_one_pdf_sync(
                             expected_qids,
                         )
                         filled_diag = _segmentation_diagnostics(filled_result, expected_qids)
-                        if filled_diag["nonempty_qids"] > band_diag["nonempty_qids"]:
+                        if (
+                            _has_high_overlap(filled_diag)
+                            and not _has_high_overlap(fallback_diag)
+                            and fallback_diag["assigned_ratio"] >= filled_diag["assigned_ratio"]
+                        ):
+                            seg_result = fallback_result
+                            segmentation_meta["fallback_used"] = True
+                            segmentation_meta["fallback_mode"] = "replace_after_fill_overlap"
+                            segmentation_meta["filled"] = filled_diag
+                        elif (
+                            filled_diag["nonempty_qids"] > band_diag["nonempty_qids"]
+                            or (_has_high_overlap(band_diag) and not _has_high_overlap(filled_diag))
+                        ):
                             seg_result = filled_result
                             segmentation_meta["fallback_used"] = True
                             segmentation_meta["fallback_mode"] = "fill_missing_qids"
@@ -1052,12 +1285,23 @@ def _process_one_pdf_sync(
     if seg_result is None:
         return (canonical, None)
 
+    postprocess_cfg = cfg.assignment_segmentation.postprocess
+    fallback_mode = str(segmentation_meta.get("fallback_mode", ""))
+    replaced_by_bbox_fallback = fallback_mode in {
+        "replace_after_band_assign_failure",
+        "replace_sparse_band_assign",
+        "replace_overlapping_band_assign",
+        "replace_after_fill_overlap",
+    }
+    if strategy == "band_assign" and not replaced_by_bbox_fallback:
+        postprocess_cfg = _candidate_postprocess_config(postprocess_cfg)
+
     segmentation_meta["before_postprocess"] = _segmentation_diagnostics(seg_result, expected_qids)
     seg_result = _postprocess_segmentation_result(
         seg_result,
         page_dims,
         page_paths,
-        cfg.assignment_segmentation.postprocess,
+        postprocess_cfg,
         expected_qids,
     )
     segmentation_meta["after_postprocess"] = _segmentation_diagnostics(seg_result, expected_qids)
@@ -1068,7 +1312,7 @@ def _process_one_pdf_sync(
         "dimensions": page_dims,
         "strategy": strategy,
         "diagnostics": segmentation_meta,
-        "postprocess": cfg.assignment_segmentation.postprocess.model_dump(),
+        "postprocess": postprocess_cfg.model_dump(),
         "questions": [
             {"qid": qr.qid, "regions": [{"page": r.page, "bbox": r.bbox} for r in qr.regions]}
             for qr in seg_result.questions

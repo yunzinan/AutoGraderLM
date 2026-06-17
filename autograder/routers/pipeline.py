@@ -973,9 +973,12 @@ def _segment_diagnostics_summary(loaded: dict | None, expected_qids: list[str]) 
             coverage = final_diag.get("assigned_ratio")
             if not isinstance(coverage, (int, float)):
                 coverage = computed_coverage
+            overlap = final_diag.get("overlap_pairs")
+            overlap_pairs = overlap if isinstance(overlap, list) else []
         else:
             missing_qids = computed_missing
             coverage = computed_coverage
+            overlap_pairs = []
         if diagnostics.get("manual_override"):
             status, label = ("needs_review", "需检查") if missing_qids else ("manual", "人工")
             return {
@@ -983,12 +986,13 @@ def _segment_diagnostics_summary(loaded: dict | None, expected_qids: list[str]) 
                 "label": label,
                 "missing_qids": missing_qids,
                 "coverage": coverage,
+                "overlap_pairs": overlap_pairs,
                 "fallback_used": False,
                 "manual_override": True,
             }
         fallback_used = bool(diagnostics.get("fallback_used"))
         fallback_attempted = bool(diagnostics.get("fallback_attempted"))
-        if missing_qids:
+        if missing_qids or overlap_pairs:
             status, label = "needs_review", "需检查"
         elif fallback_used:
             status, label = "fallback", "已回退"
@@ -1001,6 +1005,7 @@ def _segment_diagnostics_summary(loaded: dict | None, expected_qids: list[str]) 
             "label": label,
             "missing_qids": missing_qids,
             "coverage": coverage,
+            "overlap_pairs": overlap_pairs,
             "fallback_used": fallback_used,
             "fallback_attempted": fallback_attempted,
             "fallback_mode": diagnostics.get("fallback_mode", ""),

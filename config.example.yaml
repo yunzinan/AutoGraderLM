@@ -28,7 +28,15 @@ assignment_segmentation:
     vertical_margin: 28
     snap_to_content: true
     snap_to_ink_bands: true
-    candidate_bridge_gap: 36
+    candidate_min_ink_per_row: 32
+    candidate_bridge_gap: 4
+    candidate_region_merge_gap: 12
+    candidate_snap_padding: 16
+    candidate_vertical_margin: 8
+    candidate_split_min_height: 320
+    candidate_split_min_piece_height: 96
+    candidate_rule_threshold: 210
+    candidate_rule_min_width_ratio: 0.55
     candidate_max_bands: 96
   llm:
     model: "your-vision-model"
